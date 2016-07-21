@@ -26,3 +26,5 @@ RUN chmod +x /etc/service/*/run
 ADD . /app
 
 RUN cd /app && pip install -r requirements.txt
+
+EXPOSE 8000
