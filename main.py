@@ -265,7 +265,10 @@ def get_profile(access_token, api, useauth, *reqq):
 def get_api_endpoint(access_token, api = API_URL):
     p_ret = get_profile(access_token, api, None)
     try:
-        return ('https://%s/rpc' % p_ret.api_url)
+        if p_ret.api_url != None and p_ret.api_url != "":
+            return ('https://%s/rpc' % p_ret.api_url)
+        else:
+            return None
     except:
         return None
 
