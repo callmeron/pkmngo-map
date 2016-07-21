@@ -446,8 +446,8 @@ def main():
     write_data_to_file()
     pokemons = json.load(open(path + '/pokemon.json'))
     parser = argparse.ArgumentParser()
-    parser.add_argument("-u", "--username", help="PTC Username", required=True)
-    parser.add_argument("-p", "--password", help="PTC Password", required=True)
+    parser.add_argument("-u", "--username", help="PTC Username")
+    parser.add_argument("-p", "--password", help="PTC Password")
     parser.add_argument("-l", "--location", help="Location", required=True)
     parser.add_argument("-d", "--debug", help="Debug Mode", action='store_true')
     parser.set_defaults(DEBUG=False)
@@ -460,7 +460,27 @@ def main():
 
     set_location(args.location)
 
-    access_token = login_ptc(args.username, args.password)
+    if args.username != None and args.password != None:
+        username = args.username
+        password = args.password
+        with open('access.json', 'w') as f:
+            access =  {'USERNAME':username,'PASSWORD':password}
+            json.dump(access, f, indent=2)
+    else:
+        try:
+            with open('access.json') as f:
+            	access = json.load(f)
+
+            username = access.get('USERNAME', None)
+            password = access.get('PASSWORD', None)
+            if username == None or password == None:
+                print('[!] access.json file corrupt, reinsert username and password')
+                return
+        except IOError as e:
+            print('[!] You must insert username and password first!')
+            return
+
+    access_token = login_ptc(username, password)
     if access_token is None:
         print('[-] Error logging in: possible wrong username/password')
         return
