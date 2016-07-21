@@ -56,6 +56,8 @@ SESSION = requests.session()
 SESSION.headers.update({'User-Agent': 'Niantic App'})
 SESSION.verify = False
 
+is_valid = True
+
 DEBUG = False
 COORDS_LATITUDE = 0
 COORDS_LONGITUDE = 0
@@ -365,6 +367,7 @@ def heartbeat(api_endpoint, access_token, response):
             if DEBUG:
                 print(e)
             print('[-] Heartbeat missed, retrying')
+            is_valid = False
 
 
 def scan(api_endpoint, access_token, response, origin, pokemons):
@@ -480,44 +483,46 @@ def main():
             print('[!] You must insert username and password first!')
             return
 
-    access_token = login_ptc(username, password)
-    if access_token is None:
-        print('[-] Error logging in: possible wrong username/password')
-        return
-    print('[+] RPC Session Token: {} ...'.format(access_token[:25]))
-
-    api_endpoint = get_api_endpoint(access_token)
-    if api_endpoint is None:
-        print('[-] RPC server offline')
-        return
-    print('[+] Received API endpoint: {}'.format(api_endpoint))
-
-    response = get_profile(access_token, api_endpoint, None)
-    if response is not None:
-        print('[+] Login successful')
-
-        if response.payload != '':
-            payload = response.payload[0]
-            profile = pokemon_pb2.ResponseEnvelop.ProfilePayload()
-            profile.ParseFromString(payload)
-            print('[+] Username: {}'.format(profile.profile.username))
-
-            creation_time = datetime.fromtimestamp(int(profile.profile.creation_time)/1000)
-            print('[+] You are playing Pokemon Go since: {}'.format(
-                creation_time.strftime('%Y-%m-%d %H:%M:%S'),
-            ))
-
-            for curr in profile.profile.currency:
-                print('[+] {}: {}'.format(curr.type, curr.amount))
-        else:
-            print('[-] Profile payload empty')
-    else:
-        print('[-] Ooops...')
-
-    origin = LatLng.from_degrees(FLOAT_LAT, FLOAT_LONG)
-
     while True:
-        scan(api_endpoint, access_token, response, origin, pokemons)
+        global is_valid
+        access_token = login_ptc(username, password)
+        if access_token is None:
+            print('[-] Error logging in: possible wrong username/password')
+            return
+        print('[+] RPC Session Token: {} ...'.format(access_token[:25]))
+
+        api_endpoint = get_api_endpoint(access_token)
+        if api_endpoint is None:
+            print('[-] RPC server offline')
+            return
+        print('[+] Received API endpoint: {}'.format(api_endpoint))
+
+        response = get_profile(access_token, api_endpoint, None)
+        if response is not None:
+            print('[+] Login successful')
+
+            if response.payload != '':
+                payload = response.payload[0]
+                profile = pokemon_pb2.ResponseEnvelop.ProfilePayload()
+                profile.ParseFromString(payload)
+                print('[+] Username: {}'.format(profile.profile.username))
+
+                creation_time = datetime.fromtimestamp(int(profile.profile.creation_time)/1000)
+                print('[+] You are playing Pokemon Go since: {}'.format(
+                    creation_time.strftime('%Y-%m-%d %H:%M:%S'),
+                ))
+
+                for curr in profile.profile.currency:
+                    print('[+] {}: {}'.format(curr.type, curr.amount))
+            else:
+                print('[-] Profile payload empty')
+        else:
+            print('[-] Ooops...')
+
+        origin = LatLng.from_degrees(FLOAT_LAT, FLOAT_LONG)
+
+        while is_valid == True:
+            scan(api_endpoint, access_token, response, origin, pokemons)
 
 
 if __name__ == '__main__':
