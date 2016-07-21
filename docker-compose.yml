@@ -1,0 +1,10 @@
+pokemongo:
+  build: .
+  #image: matthewbaggett/pokemon-scanner
+  environment:
+    - USERNAME=CHANGEME
+    - PASSWORD=CHANGEME
+    - LOCATION=Times Square
+    - GOOGLE_MAPS_KEY=CHANGEME
+  ports:
+    - '8000:8000'

@@ -46,6 +46,10 @@ Use Python2.7 for better compatibility.
 
 Additional windows help here: https://www.reddit.com/r/pokemongodev/comments/4t8ohw/autoupdating_pokemon_go_map_scanner/d5g7xh80
 
+### Docker
+* Modify docker-compose.yml to set your USERNAME, PASSWORD, LOCATION and GOOGLE_MAPS_KEY (for best results, anyway)
+* Run `docker-compose up` for great justice.
+
 ## Donate
 My Bitcoin address is `1GV4ckHwhsqn9UAwgM8qFYArA8njCqZ21y`
 
