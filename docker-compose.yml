@@ -1,5 +1,6 @@
 pokemongo:
   build: .
+  #image: matthewbaggett/pokemon-scanner
   environment:
     - USERNAME=CHANGEME
     - PASSWORD=CHANGEME
