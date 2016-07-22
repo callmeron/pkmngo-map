@@ -41,7 +41,20 @@ def getNeighbors():
 full_path = os.path.realpath(__file__)
 (path, filename) = os.path.split(full_path)
 
-with open('config.json') as file:
+POKE_DATABASE = os.path.join(path, 'pokemon.json')
+CONFIG_FILE = os.path.join(path, 'config.json')
+ACCESS_FILE = os.path.join(path, 'access.json')
+
+PKMN_DATA_FILE = os.path.join(path,'../web/pkmn.json')
+PKSTOP_DATA_FILE =  os.path.join(path,'../web/pkstop.json')
+GYM_DATA_FILE =  os.path.join(path,'../web/gym.json')
+DATA = {
+    'pokemon':{},
+    'pokestop':{},
+    'gym':{}
+}
+
+with open(CONFIG_FILE) as file:
 	credentials = json.load(file)
 
 PTC_CLIENT_SECRET = credentials.get('PTC_CLIENT_SECRET', None)
@@ -70,14 +83,6 @@ deflat, deflng = 0, 0
 default_step = 0.001
 
 NUM_STEPS = 10
-PKMN_DATA_FILE = os.path.join(path,'../web/pkmn.json')
-PKSTOP_DATA_FILE =  os.path.join(path,'../web/pkstop.json')
-GYM_DATA_FILE =  os.path.join(path,'../web/gym.json')
-DATA = {
-    'pokemon':{},
-    'pokestop':{},
-    'gym':{}
-}
 
 def f2i(float):
   return struct.unpack('<Q', struct.pack('<d', float))[0]
@@ -446,24 +451,24 @@ def scan(api_endpoint, access_token, response, origin, pokemons):
 
 def init(config, stay=False):
     write_data_to_file()
-    pokemons = json.load(open(path + '/pokemon.json'))
+    pokemons = json.load(open(POKE_DATABASE))
 
-    if args.debug:
+    if config['DEBUG']:
         global DEBUG
         DEBUG = True
         print('[!] DEBUG mode on')
 
-    set_location(args.location)
+    set_location(config['LOCATION'])
 
-    if args.username != None and args.password != None:
-        username = args.username
-        password = args.password
-        with open('access.json', 'w') as f:
+    if config['USERNAME'] != None and config['PASSWORD'] != None:
+        username = config['USERNAME']
+        password = config['PASSWORD']
+        with open(ACCESS_FILE, 'w') as f:
             access =  {'USERNAME':username,'PASSWORD':password}
             json.dump(access, f, indent=2)
     else:
         try:
-            with open('access.json') as f:
+            with open(ACCESS_FILE) as f:
             	access = json.load(f)
 
             username = access.get('USERNAME', None)
