@@ -69,9 +69,9 @@ deflat, deflng = 0, 0
 default_step = 0.001
 
 NUM_STEPS = 10
-PKMN_DATA_FILE = 'pkmn.json'
-PKSTOP_DATA_FILE = 'pkstop.json'
-GYM_DATA_FILE = 'gym.json'
+PKMN_DATA_FILE = 'web\pkmn.json'
+PKSTOP_DATA_FILE = 'web\pkstop.json'
+GYM_DATA_FILE = 'web\gym.json'
 DATA = {
     'pokemon':{},
     'pokestop':{},
