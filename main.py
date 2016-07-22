@@ -1,5 +1,5 @@
 #!/usr/bin/python
-import pkmn_api
+from pkmn_api import pkmn_api
 import argparse
 
 def main():

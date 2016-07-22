@@ -1,6 +1,6 @@
 #!/usr/bin/python
 import os
-import pkmn_api
+from pkmn_api import pkmn_api
 from flask import Flask, request, send_from_directory
 app = Flask(__name__)
 

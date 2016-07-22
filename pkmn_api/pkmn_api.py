@@ -38,6 +38,9 @@ def getNeighbors():
         prev = prev.prev()
     return walk
 
+full_path = os.path.realpath(__file__)
+(path, filename) = os.path.split(full_path)
+
 with open('config.json') as file:
 	credentials = json.load(file)
 
@@ -67,9 +70,9 @@ deflat, deflng = 0, 0
 default_step = 0.001
 
 NUM_STEPS = 10
-PKMN_DATA_FILE = '../web/pkmn.json'
-PKSTOP_DATA_FILE = '../web/pkstop.json'
-GYM_DATA_FILE = '../web/gym.json'
+PKMN_DATA_FILE = os.path.join(path,'../web/pkmn.json')
+PKSTOP_DATA_FILE =  os.path.join(path,'../web/pkstop.json')
+GYM_DATA_FILE =  os.path.join(path,'../web/gym.json')
 DATA = {
     'pokemon':{},
     'pokestop':{},
@@ -441,10 +444,7 @@ def scan(api_endpoint, access_token, response, origin, pokemons):
         print('[+] Scan: %0.1f %%' % (((steps + (pos * .25) - .25) / steplimit**2) * 100))
 
 
-def init():
-    full_path = os.path.realpath(__file__)
-    (path, filename) = os.path.split(full_path)
-
+def init(config, stay=False):
     write_data_to_file()
     pokemons = json.load(open(path + '/pokemon.json'))
 
