@@ -337,7 +337,7 @@
                 // Pokemon not hidden
                 console.log("Adding marker " + p.name);
 
-                var detail_str = "<b>"+p.name+"</b><br>Time left: " + formatSeconds(p.timeleft) + "<br>Lat: "+p.lat+"<br>Long: "+p.lng+"<br><a href='https://www.google.com/maps/dir/Current+Location/"+p.lat+","+p.lng+"' target='_blank' title='Go Catch \'Em'>Go Catch \'Em!</a></div>";
+                var detail_str = "<b>"+p.name+"</b><br>Time left: " + formatSeconds(p.timeleft) + "<br>Lat: "+p.lat+"<br>Long: "+p.lng+"<br><a href='https://www.google.com/maps/dir/Current+Location/"+p.lat+","+p.lng+"' target='_blank' title=\"Go Catch \'Em!\">Go Catch \'Em!</a></div>";
 
                 if (markers.hasOwnProperty(pokehash)) {
                   markers[pokehash].details = detail_str;
