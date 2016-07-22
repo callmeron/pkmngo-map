@@ -47,6 +47,7 @@ PTC_CLIENT_SECRET = credentials.get('PTC_CLIENT_SECRET', None)
 ANDROID_ID = credentials.get('ANDROID_ID', None)
 SERVICE = credentials.get('SERVICE', None)
 CLIENT_SIG = credentials.get('CLIENT_SIG', None)
+GMAPS_API_KEY = credentials.get('GOOGLE_MAPS_API_KEY', None)
 
 API_URL = 'https://pgorelease.nianticlabs.com/plfe/rpc'
 LOGIN_URL = 'https://sso.pokemon.com/sso/login?service=https%3A%2F%2Fsso.pokemon.com%2Fsso%2Foauth2.0%2FcallbackAuthorize'
@@ -518,6 +519,13 @@ def main():
                 print('[-] Profile payload empty')
         else:
             print('[-] Ooops...')
+
+        if GMAPS_API_KEY != None:
+            with open('web/gmap.json', 'w') as f:
+                gdata =  {'GOOGLE_MAPS_API_KEY':GMAPS_API_KEY}
+                json.dump(gdata, f, indent=2)
+        else:
+            print('[-] Insert your GoogleMaps API key in config.json file!')
 
         origin = LatLng.from_degrees(FLOAT_LAT, FLOAT_LONG)
 

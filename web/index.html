@@ -182,7 +182,6 @@
          getFile("gym.json", true, function(response) {
            console.log("Refreshing gym data...");
            gymdata = JSON.parse(response);
-           console.log("TODO: Gym");
 
            // Clear markers
            for (var gymId in fort_markers['gym']) {
@@ -210,7 +209,7 @@
              var infowindow = new google.maps.InfoWindow({});
 
              var team = getTeamFromNum(p.team);
-             var image = "./static/forts/"+team+".png";
+             var image = "./img/forts/"+team+".png";
 
              var marker = new google.maps.Marker({
                map: map,
@@ -241,7 +240,6 @@
          getFile("pkstop.json", true, function(response) {
            console.log("Refreshing pokestop data...");
            stopdata = JSON.parse(response);
-           console.log("TODO: Pokestop");
 
            // Clear markers
            for (var stopId in fort_markers['stop']) {
@@ -269,7 +267,7 @@
              var infowindow = new google.maps.InfoWindow({});
 
              var lure = p.timeleft>0? "Lured": "";
-             var image = "./static/forts/Pstop"+lure+".png";
+             var image = "./img/forts/Pstop"+lure+".png";
              var detail_str = "<b>Pokestop "+lure+"</b><br>" + (p.timeleft>0? "Lure timeleft: "+p.timeleft+"<br>":"") + "Lat: "+p.lat+"<br>Long: "+p.lng;
 
              var marker = new google.maps.Marker({
@@ -412,7 +410,7 @@
       updated = false;
 
 
-      getFile("config.json", false, function(configData) {
+      getFile("gmap.json", false, function(configData) {
         config = JSON.parse(configData)
         console.log("Using api key: " + config.GOOGLE_MAPS_API_KEY);
         loadScript("https://maps.googleapis.com/maps/api/js?key=" + config.GOOGLE_MAPS_API_KEY + "&libraries=drawing&callback=initMap");
@@ -429,7 +427,7 @@
         var legend = document.createElement('div');
         legend.id = 'legend';
         var content = [];
-        content.push('<div id="legend-title"><h3><img id="legend-icon" src="./static/hide.png" onclick="toggleLegend();" />Toolbar</h3></div>');
+        content.push('<div id="legend-title"><h3><img id="legend-icon" src="./img/hide.png" onclick="toggleLegend();" />Toolbar</h3></div>');
         content.push('<div id="legend-content">');
         content.push('<div id="legend-hide-pokestop"><button onclick="getPokestop()">Refresh Pokestop</button></div>');
         content.push('<div id="legend-hide-gym"><button onclick="getGym()">Refresh Gym</button></div>');

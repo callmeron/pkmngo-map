@@ -17,7 +17,6 @@ This version works only with **PokemonTrainerClub** account.<br/>
 
 ## Todo
 * One Click Deploy on Heroku like [emeth-/pokelocater/](https://github.com/emeth-/pokelocater/)
-* Cache PTC Credentials
 * Save in localstorage Hide Pokemon
 
 ## Screen
@@ -35,7 +34,7 @@ Use Python2.7 for better compatibility.
 * `pip install -r requirements.txt`
 * Put Google Maps API key in `config.json`
 * Syntax: `./run.sh [user] [pass] "[location]"`
-* Open another terminal in the project location and run `python -m SimpleHTTPServer 8000`
+* Open another terminal in the project location and run `cd web; python -m SimpleHTTPServer 8000`
 * Run your browser to `http://localhost:8000`
 
 ### Windows

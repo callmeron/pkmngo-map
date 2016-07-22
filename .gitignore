@@ -1,8 +1,9 @@
-gym.json
-pkmn.json
-pkstop.json
+web/gym.json
+web/pkmn.json
+web/pkstop.json
 config.json
 access.json
+web/gmap.json
 docker-compose.*.yml
 
 # Byte-compiled / optimized / DLL files
