@@ -511,7 +511,7 @@ def init(config, stay=False):
         else:
             print('[-] Ooops...')
 
-        if GMAPS_API_KEY != None:
+        if GMAPS_API_KEY != None or GMAPS_API_KEY == 'PUT_YOUR_KEY_HERE':
             with open('web/gmap.json', 'w') as f:
                 gdata =  {'GOOGLE_MAPS_API_KEY':GMAPS_API_KEY}
                 json.dump(gdata, f, indent=2)
