@@ -5,5 +5,5 @@ set /p Username= Username-
 set /p Password= Password-
 set /p UserInputPath= Set Location-
 cd ..
-python main.py -u %Username% -p %Password% -l "%UserInputPath%"
+python api/main.py -u %Username% -p %Password% -l "%UserInputPath%"
 pause

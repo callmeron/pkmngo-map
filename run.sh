@@ -1,2 +1,2 @@
 #!/bin/bash
-python main.py -u $1 -p $2 -l "$3"
+python api/main.py -u $1 -p $2 -l "$3"
