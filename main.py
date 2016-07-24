@@ -1,20 +1,19 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
+import argparse
+import json
 import os
 import re
-import sys
 import struct
-import json
-import requests
-import argparse
-import pokemon_pb2
 import time
+from datetime import datetime
 
+import requests
+from geopy.geocoders import GoogleV3
 from google.protobuf.internal import encoder
 
-from datetime import datetime
-from geopy.geocoders import GoogleV3
+import pokemon_pb2
 
 try:
     from requests.packages.urllib3.exceptions import InsecureRequestWarning
@@ -31,16 +30,16 @@ def encode(cellid):
     return ''.join(output)
 
 
-def getNeighbors():
-    origin = CellId.from_lat_lng(LatLng.from_degrees(FLOAT_LAT, FLOAT_LONG)).parent(15)
-    walk = [origin.id()]
+def get_neighbors():
+    origin_cell = CellId.from_lat_lng(LatLng.from_degrees(FLOAT_LAT, FLOAT_LONG)).parent(15)
+    walk = [origin_cell.id()]
     # 10 before and 10 after
-    next = origin.next()
-    prev = origin.prev()
+    next_cell = origin_cell.next()
+    prev = origin_cell.prev()
     for i in range(10):
         walk.append(prev.id())
-        walk.append(next.id())
-        next = next.next()
+        walk.append(next_cell.id())
+        next_cell = next_cell.next()
         prev = prev.prev()
     return walk
 
@@ -82,22 +81,23 @@ DATA = {
     'pokestop': {},
     'gym': {}
 }
+GMAP_DATA_FILE = os.path.join('web', 'gmap.json')
 
 REFRESH_TIME = 1200
 
 DEFAULT_ACCESS_FILE = 'access.json'
 
 
-def f2i(float):
-    return struct.unpack('<Q', struct.pack('<d', float))[0]
+def f2i(x):
+    return struct.unpack('<Q', struct.pack('<d', x))[0]
 
 
-def f2h(float):
-    return hex(struct.unpack('<Q', struct.pack('<d', float))[0])
+def f2h(x):
+    return hex(struct.unpack('<Q', struct.pack('<d', x))[0])
 
 
-def h2f(hex):
-    return struct.unpack('<d', struct.pack('<Q', int(hex, 16)))[0]
+def h2f(x):
+    return struct.unpack('<d', struct.pack('<Q', int(x, 16)))[0]
 
 
 def prune():
@@ -113,7 +113,7 @@ def prune():
 def write_data_to_file():
     prune()
 
-    # different file for bandwith save
+    # different file for bandwidth save
     with open(PKMN_DATA_FILE, 'w') as f:
         json.dump(DATA['pokemon'], f, indent=2)
 
@@ -124,8 +124,8 @@ def write_data_to_file():
         json.dump(DATA['gym'], f, indent=2)
 
 
-def add_pokemon(pokeId, name, lat, lng, timestamp, timeleft):
-    pokehash = '%s:%s:%s' % (lat, lng, pokeId)
+def add_pokemon(poke_id, name, lat, lng, timestamp, timeleft):
+    pokehash = '%s:%s:%s' % (lat, lng, poke_id)
     if pokehash in DATA['pokemon']:
         if abs(DATA['pokemon'][pokehash]['timeleft'] - timeleft) < 2:
             # Assume it's the same one and average the expiry time
@@ -136,7 +136,7 @@ def add_pokemon(pokeId, name, lat, lng, timestamp, timeleft):
             DATA['pokemon'][pokehash]['timeleft'] = min(DATA['pokemon'][pokehash]['timeleft'], timeleft)
     else:
         DATA['pokemon'][pokehash] = {
-            'id': pokeId,
+            'id': poke_id,
             'name': name,
             'lat': lat,
             'lng': lng,
@@ -145,31 +145,31 @@ def add_pokemon(pokeId, name, lat, lng, timestamp, timeleft):
         }
 
 
-def add_pokestop(pokestopId, lat, lng, timeleft):
-    if pokestopId in DATA['pokestop']:
-        DATA['pokestop'][pokestopId]['timeleft'] = timeleft
+def add_pokestop(pokestop_id, lat, lng, timeleft):
+    if pokestop_id in DATA['pokestop']:
+        DATA['pokestop'][pokestop_id]['timeleft'] = timeleft
     else:
-        DATA['pokestop'][pokestopId] = {
-            'id': pokestopId,
+        DATA['pokestop'][pokestop_id] = {
+            'id': pokestop_id,
             'lat': lat,
             'lng': lng,
             'timeleft': timeleft
         }
 
 
-def add_gym(gymId, team, lat, lng, points, pokemonGuard):
-    if gymId in DATA['gym']:
-        DATA['gym'][gymId]['team'] = team
-        DATA['gym'][gymId]['points'] = points
-        DATA['gym'][gymId]['guard'] = pokemonGuard
+def add_gym(gym_id, team, lat, lng, points, pokemon_guard):
+    if gym_id in DATA['gym']:
+        DATA['gym'][gym_id]['team'] = team
+        DATA['gym'][gym_id]['points'] = points
+        DATA['gym'][gym_id]['guard'] = pokemon_guard
     else:
-        DATA['gym'][gymId] = {
-            'id': gymId,
+        DATA['gym'][gym_id] = {
+            'id': gym_id,
             'team': team,
             'lat': lat,
             'lng': lng,
             'points': points,
-            'guard': pokemonGuard
+            'guard': pokemon_guard
         }
 
 
@@ -203,7 +203,7 @@ def set_location_coords(lat, lng, alt):
 
 
 def get_location_coords():
-    return (COORDS_LATITUDE, COORDS_LONGITUDE, COORDS_ALTITUDE)
+    return COORDS_LATITUDE, COORDS_LONGITUDE, COORDS_ALTITUDE
 
 
 def api_req(api_endpoint, access_token, *mehs, **kw):
@@ -256,7 +256,7 @@ def api_req(api_endpoint, access_token, *mehs, **kw):
             continue
 
 
-def get_profile(access_token, api, useauth, *reqq):
+def get_profile(access_token, api, use_auth, *reqq):
     req = pokemon_pb2.RequestEnvelop()
 
     req1 = req.requests.add()
@@ -284,14 +284,14 @@ def get_profile(access_token, api, useauth, *reqq):
     if len(reqq) >= 5:
         req5.MergeFrom(reqq[4])
 
-    return api_req(api, access_token, req, useauth=useauth)
+    return api_req(api, access_token, req, useauth=use_auth)
 
 
 def get_api_endpoint(access_token, api=API_URL):
     p_ret = get_profile(access_token, api, None)
     try:
-        if p_ret.api_url != None and p_ret.api_url != "":
-            return ('https://%s/rpc' % p_ret.api_url)
+        if p_ret.api_url is not None and p_ret.api_url != "":
+            return 'https://%s/rpc' % p_ret.api_url
         else:
             return None
     except:
@@ -325,11 +325,10 @@ def login_ptc(username, password):
         'execution': jdata['execution'],
         '_eventId': 'submit',
         'username': username,
-        'password': password,
+        'password': password
     }
     r1 = session.post(LOGIN_URL, data=data, headers=head)
 
-    ticket = None
     try:
         ticket = re.sub('.*ticket=', '', r1.history[0].headers['Location'])
     except Exception, e:
@@ -342,7 +341,7 @@ def login_ptc(username, password):
         'redirect_uri': 'https://www.nianticlabs.com/pokemongo/error',
         'client_secret': PTC_CLIENT_SECRET,
         'grant_type': 'refresh_token',
-        'code': ticket,
+        'code': ticket
     }
     r2 = session.post(LOGIN_OAUTH, data=data1)
     access_token = re.sub('&expires.*', '', r2.content)
@@ -360,7 +359,7 @@ def raw_heartbeat(api_endpoint, access_token, response):
     m.bytes = "05daf51635c82611d1aac95c0b051d3ec088a930"
     m5.message = m.SerializeToString()
 
-    walk = sorted(getNeighbors())
+    walk = sorted(get_neighbors())
 
     m1 = pokemon_pb2.RequestEnvelop.Requests()
     m1.type = 106
@@ -383,12 +382,13 @@ def raw_heartbeat(api_endpoint, access_token, response):
         payload = response.payload[0]
     except (AttributeError, IndexError):
         return
-    heartbeat = pokemon_pb2.ResponseEnvelop.HeartbeatPayload()
-    heartbeat.ParseFromString(payload)
-    return heartbeat
+    h = pokemon_pb2.ResponseEnvelop.HeartbeatPayload()
+    h.ParseFromString(payload)
+    return h
 
 
 def heartbeat(api_endpoint, access_token, response):
+    global is_valid
     while True:
         try:
             h = raw_heartbeat(api_endpoint, access_token, response)
@@ -400,7 +400,7 @@ def heartbeat(api_endpoint, access_token, response):
             is_valid = False
 
 
-def scan(api_endpoint, access_token, response, origin, pokemons):
+def scan(api_endpoint, access_token, response, origin_lat_long, pokemons):
     steps = 0
     steplimit = NUM_STEPS
     pos = 1
@@ -428,13 +428,13 @@ def scan(api_endpoint, access_token, response, origin, pokemons):
             try:
                 for cell in hh.cells:
                     for wild in cell.WildPokemon:
-                        hash = wild.SpawnPointId + ':' + str(wild.pokemon.PokemonId)
-                        if (hash not in seen):
+                        spawn_id_pokemon_id = wild.SpawnPointId + ':' + str(wild.pokemon.PokemonId)
+                        if spawn_id_pokemon_id not in seen:
                             visible.append(wild)
-                            seen.add(hash)
+                            seen.add(spawn_id_pokemon_id)
                     if cell.Fort:
                         for Fort in cell.Fort:
-                            if Fort.Enabled == True:
+                            if Fort.Enabled:
                                 if Fort.GymPoints:
                                     add_gym(Fort.FortId, Fort.Team, Fort.Latitude, Fort.Longitude, Fort.GymPoints,
                                             pokemons[Fort.GuardPokemonId - 1]['Name'])
@@ -451,14 +451,14 @@ def scan(api_endpoint, access_token, response, origin, pokemons):
 
         for poke in visible:
             other = LatLng.from_degrees(poke.Latitude, poke.Longitude)
-            diff = other - origin
+            diff = other - origin_lat_long
             # print(diff)
             difflat = diff.lat().degrees
             difflng = diff.lng().degrees
 
             print("[+] (%s) %s is visible at (%s, %s) for %s seconds" % (
-            poke.pokemon.PokemonId, pokemons[poke.pokemon.PokemonId - 1]['Name'], poke.Latitude, poke.Longitude,
-            poke.TimeTillHiddenMs / 1000))
+                poke.pokemon.PokemonId, pokemons[poke.pokemon.PokemonId - 1]['Name'], poke.Latitude, poke.Longitude,
+                poke.TimeTillHiddenMs / 1000))
 
             timestamp = int(time.time())
             add_pokemon(poke.pokemon.PokemonId, pokemons[poke.pokemon.PokemonId - 1]['Name'], poke.Latitude,
@@ -500,7 +500,7 @@ def main():
 
     access_file = args.access_file if args.access_file is not None else DEFAULT_ACCESS_FILE
 
-    if args.username != None and args.password != None:
+    if args.username is not None and args.password is not None:
         username = args.username
         password = args.password
         with open(access_file, 'w') as f:
@@ -513,7 +513,7 @@ def main():
 
             username = access.get('USERNAME', None)
             password = access.get('PASSWORD', None)
-            if username == None or password == None:
+            if username is None or password is None:
                 print('[!] ' + access_file + ' file corrupt, reinsert username and password')
                 return
         except IOError as e:
@@ -556,19 +556,19 @@ def main():
         else:
             print('[-] Ooops...')
 
-        if GMAPS_API_KEY != None:
-            with open('web/gmap.json', 'w') as f:
+        if GMAPS_API_KEY is not None:
+            with open(GMAP_DATA_FILE, 'w') as f:
                 gdata = {'GOOGLE_MAPS_API_KEY': GMAPS_API_KEY}
                 json.dump(gdata, f, indent=2)
         else:
             print('[-] Insert your GoogleMaps API key in config.json file!')
 
-        origin = LatLng.from_degrees(FLOAT_LAT, FLOAT_LONG)
+        origin_cell = LatLng.from_degrees(FLOAT_LAT, FLOAT_LONG)
 
         start_time = time.time()
         elapsed_time = time.time() - start_time
         while is_valid and elapsed_time < REFRESH_TIME:
-            scan(api_endpoint, access_token, response, origin, pokemons)
+            scan(api_endpoint, access_token, response, origin_cell, pokemons)
             elapsed_time = time.time()
 
 
