@@ -15,17 +15,21 @@ from google.protobuf.internal import encoder
 
 from datetime import datetime
 from geopy.geocoders import GoogleV3
+
 try:
     from requests.packages.urllib3.exceptions import InsecureRequestWarning
+
     requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 except ImportError:
     pass
 from s2sphere import *
 
+
 def encode(cellid):
     output = []
     encoder._VarintEncoder()(output.append, cellid)
     return ''.join(output)
+
 
 def getNeighbors():
     origin = CellId.from_lat_lng(LatLng.from_degrees(FLOAT_LAT, FLOAT_LONG)).parent(15)
@@ -40,8 +44,9 @@ def getNeighbors():
         prev = prev.prev()
     return walk
 
+
 with open('config.json') as config_file:
-	credentials = json.load(config_file)
+    credentials = json.load(config_file)
 
 PTC_CLIENT_SECRET = credentials.get('PTC_CLIENT_SECRET', None)
 ANDROID_ID = credentials.get('ANDROID_ID', None)
@@ -69,27 +74,31 @@ deflat, deflng = 0, 0
 default_step = 0.001
 
 NUM_STEPS = 10
-PKMN_DATA_FILE = os.path.join('web','pkmn.json')
-PKSTOP_DATA_FILE = os.path.join('web','pkstop.json')
-GYM_DATA_FILE = os.path.join('web','gym.json')
+PKMN_DATA_FILE = os.path.join('web', 'pkmn.json')
+PKSTOP_DATA_FILE = os.path.join('web', 'pkstop.json')
+GYM_DATA_FILE = os.path.join('web', 'gym.json')
 DATA = {
-    'pokemon':{},
-    'pokestop':{},
-    'gym':{}
+    'pokemon': {},
+    'pokestop': {},
+    'gym': {}
 }
 
 REFRESH_TIME = 1200
 
 DEFAULT_ACCESS_FILE = 'access.json'
 
+
 def f2i(float):
-  return struct.unpack('<Q', struct.pack('<d', float))[0]
+    return struct.unpack('<Q', struct.pack('<d', float))[0]
+
 
 def f2h(float):
-  return hex(struct.unpack('<Q', struct.pack('<d', float))[0])
+    return hex(struct.unpack('<Q', struct.pack('<d', float))[0])
+
 
 def h2f(hex):
-  return struct.unpack('<d', struct.pack('<Q', int(hex,16)))[0]
+    return struct.unpack('<d', struct.pack('<Q', int(hex, 16)))[0]
+
 
 def prune():
     # prune despawned pokemon
@@ -99,6 +108,7 @@ def prune():
         poke['timestamp'] = cur_time
         if poke['timeleft'] <= 0:
             del DATA['pokemon'][pokehash]
+
 
 def write_data_to_file():
     prune()
@@ -112,6 +122,7 @@ def write_data_to_file():
 
     with open(GYM_DATA_FILE, 'w') as f:
         json.dump(DATA['gym'], f, indent=2)
+
 
 def add_pokemon(pokeId, name, lat, lng, timestamp, timeleft):
     pokehash = '%s:%s:%s' % (lat, lng, pokeId)
@@ -133,6 +144,7 @@ def add_pokemon(pokeId, name, lat, lng, timestamp, timeleft):
             'timeleft': timeleft
         }
 
+
 def add_pokestop(pokestopId, lat, lng, timeleft):
     if pokestopId in DATA['pokestop']:
         DATA['pokestop'][pokestopId]['timeleft'] = timeleft
@@ -143,6 +155,7 @@ def add_pokestop(pokestopId, lat, lng, timeleft):
             'lng': lng,
             'timeleft': timeleft
         }
+
 
 def add_gym(gymId, team, lat, lng, points, pokemonGuard):
     if gymId in DATA['gym']:
@@ -158,6 +171,7 @@ def add_gym(gymId, team, lat, lng, points, pokemonGuard):
             'points': points,
             'guard': pokemonGuard
         }
+
 
 def set_location(location_name):
     geolocator = GoogleV3()
@@ -183,12 +197,14 @@ def set_location_coords(lat, lng, alt):
     global FLOAT_LAT, FLOAT_LONG
     FLOAT_LAT = lat
     FLOAT_LONG = lng
-    COORDS_LATITUDE = f2i(lat) # 0x4042bd7c00000000 # f2i(lat)
-    COORDS_LONGITUDE = f2i(lng) # 0xc05e8aae40000000 #f2i(lng)
+    COORDS_LATITUDE = f2i(lat)  # 0x4042bd7c00000000 # f2i(lat)
+    COORDS_LONGITUDE = f2i(lng)  # 0xc05e8aae40000000 #f2i(lng)
     COORDS_ALTITUDE = f2i(alt)
+
 
 def get_location_coords():
     return (COORDS_LATITUDE, COORDS_LONGITUDE, COORDS_ALTITUDE)
+
 
 def api_req(api_endpoint, access_token, *mehs, **kw):
     while True:
@@ -239,6 +255,7 @@ def api_req(api_endpoint, access_token, *mehs, **kw):
             time.sleep(0.51)
             continue
 
+
 def get_profile(access_token, api, useauth, *reqq):
     req = pokemon_pb2.RequestEnvelop()
 
@@ -267,9 +284,10 @@ def get_profile(access_token, api, useauth, *reqq):
     if len(reqq) >= 5:
         req5.MergeFrom(reqq[4])
 
-    return api_req(api, access_token, req, useauth = useauth)
+    return api_req(api, access_token, req, useauth=useauth)
 
-def get_api_endpoint(access_token, api = API_URL):
+
+def get_api_endpoint(access_token, api=API_URL):
     p_ret = get_profile(access_token, api, None)
     try:
         if p_ret.api_url != None and p_ret.api_url != "":
@@ -331,6 +349,7 @@ def login_ptc(username, password):
     access_token = re.sub('.*access_token=', '', access_token)
     return access_token
 
+
 def raw_heartbeat(api_endpoint, access_token, response):
     m4 = pokemon_pb2.RequestEnvelop.Requests()
     m = pokemon_pb2.RequestEnvelop.MessageSingleInt()
@@ -368,6 +387,7 @@ def raw_heartbeat(api_endpoint, access_token, response):
     heartbeat.ParseFromString(payload)
     return heartbeat
 
+
 def heartbeat(api_endpoint, access_token, response):
     while True:
         try:
@@ -384,11 +404,11 @@ def scan(api_endpoint, access_token, response, origin, pokemons):
     steps = 0
     steplimit = NUM_STEPS
     pos = 1
-    x   = 0
-    y   = 0
-    dx  = 0
-    dy  = -1
-    while steps < steplimit**2:
+    x = 0
+    y = 0
+    dx = 0
+    dy = -1
+    while steps < steplimit ** 2:
         original_lat = FLOAT_LAT
         original_long = FLOAT_LONG
         parent = CellId.from_lat_lng(LatLng.from_degrees(FLOAT_LAT, FLOAT_LONG)).parent(15)
@@ -416,12 +436,13 @@ def scan(api_endpoint, access_token, response, origin, pokemons):
                         for Fort in cell.Fort:
                             if Fort.Enabled == True:
                                 if Fort.GymPoints:
-                                    add_gym(Fort.FortId, Fort.Team, Fort.Latitude, Fort.Longitude, Fort.GymPoints, pokemons[Fort.GuardPokemonId - 1]['Name'])
+                                    add_gym(Fort.FortId, Fort.Team, Fort.Latitude, Fort.Longitude, Fort.GymPoints,
+                                            pokemons[Fort.GuardPokemonId - 1]['Name'])
                                 elif Fort.FortType:
                                     expire_time = 0
                                     if Fort.LureInfo.LureExpiresTimestampMs:
-                                        expire_time = datetime\
-                                            .fromtimestamp(Fort.LureInfo.LureExpiresTimestampMs / 1000.0)\
+                                        expire_time = datetime \
+                                            .fromtimestamp(Fort.LureInfo.LureExpiresTimestampMs / 1000.0) \
                                             .strftime("%H:%M:%S")
                                     add_pokestop(Fort.FortId, Fort.Latitude, Fort.Longitude, expire_time)
 
@@ -435,21 +456,24 @@ def scan(api_endpoint, access_token, response, origin, pokemons):
             difflat = diff.lat().degrees
             difflng = diff.lng().degrees
 
-            print("[+] (%s) %s is visible at (%s, %s) for %s seconds" % (poke.pokemon.PokemonId, pokemons[poke.pokemon.PokemonId - 1]['Name'], poke.Latitude, poke.Longitude, poke.TimeTillHiddenMs / 1000))
+            print("[+] (%s) %s is visible at (%s, %s) for %s seconds" % (
+            poke.pokemon.PokemonId, pokemons[poke.pokemon.PokemonId - 1]['Name'], poke.Latitude, poke.Longitude,
+            poke.TimeTillHiddenMs / 1000))
 
             timestamp = int(time.time())
-            add_pokemon(poke.pokemon.PokemonId, pokemons[poke.pokemon.PokemonId - 1]['Name'], poke.Latitude, poke.Longitude, timestamp, poke.TimeTillHiddenMs / 1000)
+            add_pokemon(poke.pokemon.PokemonId, pokemons[poke.pokemon.PokemonId - 1]['Name'], poke.Latitude,
+                        poke.Longitude, timestamp, poke.TimeTillHiddenMs / 1000)
 
         write_data_to_file()
 
-        if (-steplimit/2 < x <= steplimit/2) and (-steplimit/2 < y <= steplimit/2):
-            set_location_coords((x * 0.0025) + deflat, (y * 0.0025 ) + deflng, 0)
-        if x == y or (x < 0 and x == -y) or (x > 0 and x == 1-y):
+        if (-steplimit / 2 < x <= steplimit / 2) and (-steplimit / 2 < y <= steplimit / 2):
+            set_location_coords((x * 0.0025) + deflat, (y * 0.0025) + deflng, 0)
+        if x == y or (x < 0 and x == -y) or (x > 0 and x == 1 - y):
             dx, dy = -dy, dx
-        x, y = x+dx, y+dy
-        steps +=1
+        x, y = x + dx, y + dy
+        steps += 1
 
-        print('[+] Scan: %0.1f %%' % (((steps + (pos * .25) - .25) / steplimit**2) * 100))
+        print('[+] Scan: %0.1f %%' % (((steps + (pos * .25) - .25) / steplimit ** 2) * 100))
 
 
 def main():
@@ -480,7 +504,7 @@ def main():
         username = args.username
         password = args.password
         with open(access_file, 'w') as f:
-            access = {'USERNAME':username,'PASSWORD':password}
+            access = {'USERNAME': username, 'PASSWORD': password}
             json.dump(access, f, indent=2)
     else:
         try:
@@ -520,7 +544,7 @@ def main():
                 profile.ParseFromString(payload)
                 print('[+] Username: {}'.format(profile.profile.username))
 
-                creation_time = datetime.fromtimestamp(int(profile.profile.creation_time)/1000)
+                creation_time = datetime.fromtimestamp(int(profile.profile.creation_time) / 1000)
                 print('[+] You are playing Pokemon Go since: {}'.format(
                     creation_time.strftime('%Y-%m-%d %H:%M:%S'),
                 ))
@@ -534,7 +558,7 @@ def main():
 
         if GMAPS_API_KEY != None:
             with open('web/gmap.json', 'w') as f:
-                gdata = {'GOOGLE_MAPS_API_KEY':GMAPS_API_KEY}
+                gdata = {'GOOGLE_MAPS_API_KEY': GMAPS_API_KEY}
                 json.dump(gdata, f, indent=2)
         else:
             print('[-] Insert your GoogleMaps API key in config.json file!')
@@ -546,7 +570,6 @@ def main():
         while is_valid and elapsed_time < REFRESH_TIME:
             scan(api_endpoint, access_token, response, origin, pokemons)
             elapsed_time = time.time()
-
 
 
 if __name__ == '__main__':
