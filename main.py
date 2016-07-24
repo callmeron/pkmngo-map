@@ -40,8 +40,8 @@ def getNeighbors():
         prev = prev.prev()
     return walk
 
-with open('config.json') as file:
-	credentials = json.load(file)
+with open('config.json') as config_file:
+	credentials = json.load(config_file)
 
 PTC_CLIENT_SECRET = credentials.get('PTC_CLIENT_SECRET', None)
 ANDROID_ID = credentials.get('ANDROID_ID', None)
@@ -77,6 +77,10 @@ DATA = {
     'pokestop':{},
     'gym':{}
 }
+
+REFRESH_TIME = 1200
+
+DEFAULT_ACCESS_FILE = 'access.json'
 
 def f2i(float):
   return struct.unpack('<Q', struct.pack('<d', float))[0]
@@ -277,14 +281,19 @@ def get_api_endpoint(access_token, api = API_URL):
 
 
 def login_ptc(username, password):
+    session = requests.session()
+    session.headers.update({'User-Agent': 'Niantic App'})
+    session.verify = False
+
     print('[!] login for: {}'.format(username))
+    print('[!] password for: {}'.format(password))
     head = {'User-Agent': 'Niantic App'}
-    r = SESSION.get(LOGIN_URL, headers=head)
+    r = session.get(LOGIN_URL, headers=head)
 
     try:
         jdata = json.loads(r.content)
     except ValueError, e:
-        debug('login_ptc: could not decode JSON from {}'.format(r.content))
+        print('login_ptc: could not decode JSON from {}'.format(r.content))
         return None
 
     # Maximum password length is 15 (sign in page enforces this limit, API does not)
@@ -300,7 +309,7 @@ def login_ptc(username, password):
         'username': username,
         'password': password,
     }
-    r1 = SESSION.post(LOGIN_URL, data=data, headers=head)
+    r1 = session.post(LOGIN_URL, data=data, headers=head)
 
     ticket = None
     try:
@@ -317,7 +326,7 @@ def login_ptc(username, password):
         'grant_type': 'refresh_token',
         'code': ticket,
     }
-    r2 = SESSION.post(LOGIN_OAUTH, data=data1)
+    r2 = session.post(LOGIN_OAUTH, data=data1)
     access_token = re.sub('&expires.*', '', r2.content)
     access_token = re.sub('.*access_token=', '', access_token)
     return access_token
@@ -453,6 +462,7 @@ def main():
     parser.add_argument("-u", "--username", help="PTC Username")
     parser.add_argument("-p", "--password", help="PTC Password")
     parser.add_argument("-l", "--location", help="Location", required=True)
+    parser.add_argument("-a", "--access-file", help="Access file")
     parser.add_argument("-d", "--debug", help="Debug Mode", action='store_true')
     parser.set_defaults(DEBUG=False)
     args = parser.parse_args()
@@ -464,21 +474,23 @@ def main():
 
     set_location(args.location)
 
+    access_file = args.access_file if args.access_file is not None else DEFAULT_ACCESS_FILE
+
     if args.username != None and args.password != None:
         username = args.username
         password = args.password
-        with open('access.json', 'w') as f:
-            access =  {'USERNAME':username,'PASSWORD':password}
+        with open(access_file, 'w') as f:
+            access = {'USERNAME':username,'PASSWORD':password}
             json.dump(access, f, indent=2)
     else:
         try:
-            with open('access.json') as f:
-            	access = json.load(f)
+            with open(access_file) as f:
+                access = json.load(f)
 
             username = access.get('USERNAME', None)
             password = access.get('PASSWORD', None)
             if username == None or password == None:
-                print('[!] access.json file corrupt, reinsert username and password')
+                print('[!] ' + access_file + ' file corrupt, reinsert username and password')
                 return
         except IOError as e:
             print('[!] You must insert username and password first!')
@@ -522,15 +534,19 @@ def main():
 
         if GMAPS_API_KEY != None:
             with open('web/gmap.json', 'w') as f:
-                gdata =  {'GOOGLE_MAPS_API_KEY':GMAPS_API_KEY}
+                gdata = {'GOOGLE_MAPS_API_KEY':GMAPS_API_KEY}
                 json.dump(gdata, f, indent=2)
         else:
             print('[-] Insert your GoogleMaps API key in config.json file!')
 
         origin = LatLng.from_degrees(FLOAT_LAT, FLOAT_LONG)
 
-        while is_valid == True:
+        start_time = time.time()
+        elapsed_time = time.time() - start_time
+        while is_valid and elapsed_time < REFRESH_TIME:
             scan(api_endpoint, access_token, response, origin, pokemons)
+            elapsed_time = time.time()
+
 
 
 if __name__ == '__main__':
