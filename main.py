@@ -47,19 +47,23 @@ def get_neighbors():
 with open('config.json') as config_file:
     credentials = json.load(config_file)
 
+PASSWORD_KEY = 'PASSWORD'
+USERNAME_KEY = 'USERNAME'
+GYM_KEY = 'gym'
+POKESTOP_KEY = 'pokestop'
+
 PTC_CLIENT_SECRET = credentials.get('PTC_CLIENT_SECRET', None)
 ANDROID_ID = credentials.get('ANDROID_ID', None)
 SERVICE = credentials.get('SERVICE', None)
 CLIENT_SIG = credentials.get('CLIENT_SIG', None)
 GMAPS_API_KEY = credentials.get('GOOGLE_MAPS_API_KEY', None)
 
-API_URL = 'https://pgorelease.nianticlabs.com/plfe/rpc'
+DEFAULT_API_URL = 'https://pgorelease.nianticlabs.com/plfe/rpc'
 LOGIN_URL = 'https://sso.pokemon.com/sso/login?service=https%3A%2F%2Fsso.pokemon.com%2Fsso%2Foauth2.0%2FcallbackAuthorize'
 LOGIN_OAUTH = 'https://sso.pokemon.com/sso/oauth2.0/accessToken'
 
-SESSION = requests.session()
-SESSION.headers.update({'User-Agent': 'Niantic App'})
-SESSION.verify = False
+DEFAULT_MAX_LOGIN_RETRIES = 5
+DEFAULT_API_ENDPOINT_RETRIES = 5
 
 is_valid = True
 
@@ -72,15 +76,18 @@ FLOAT_LONG = 0
 deflat, deflng = 0, 0
 default_step = 0.001
 
-NUM_STEPS = 10
-PKMN_DATA_FILE = os.path.join('web', 'pkmn.json')
-PKSTOP_DATA_FILE = os.path.join('web', 'pkstop.json')
-GYM_DATA_FILE = os.path.join('web', 'gym.json')
-DATA = {
+# poke_data_lock;
+
+poke_data = {
     'pokemon': {},
     'pokestop': {},
     'gym': {}
 }
+
+NUM_STEPS = 10
+PKMN_DATA_FILE = os.path.join('web', 'pkmn.json')
+PKSTOP_DATA_FILE = os.path.join('web', 'pkstop.json')
+GYM_DATA_FILE = os.path.join('web', 'gym.json')
 GMAP_DATA_FILE = os.path.join('web', 'gmap.json')
 
 REFRESH_TIME = 1200
@@ -103,11 +110,11 @@ def h2f(x):
 def prune():
     # prune despawned pokemon
     cur_time = int(time.time())
-    for (pokehash, poke) in DATA['pokemon'].items():
+    for (pokehash, poke) in poke_data['pokemon'].items():
         poke['timeleft'] = poke['timeleft'] - (cur_time - poke['timestamp'])
         poke['timestamp'] = cur_time
         if poke['timeleft'] <= 0:
-            del DATA['pokemon'][pokehash]
+            del poke_data['pokemon'][pokehash]
 
 
 def write_data_to_file():
@@ -115,27 +122,27 @@ def write_data_to_file():
 
     # different file for bandwidth save
     with open(PKMN_DATA_FILE, 'w') as f:
-        json.dump(DATA['pokemon'], f, indent=2)
+        json.dump(poke_data['pokemon'], f, indent=2)
 
     with open(PKSTOP_DATA_FILE, 'w') as f:
-        json.dump(DATA['pokestop'], f, indent=2)
+        json.dump(poke_data['pokestop'], f, indent=2)
 
     with open(GYM_DATA_FILE, 'w') as f:
-        json.dump(DATA['gym'], f, indent=2)
+        json.dump(poke_data['gym'], f, indent=2)
 
 
 def add_pokemon(poke_id, name, lat, lng, timestamp, timeleft):
     pokehash = '%s:%s:%s' % (lat, lng, poke_id)
-    if pokehash in DATA['pokemon']:
-        if abs(DATA['pokemon'][pokehash]['timeleft'] - timeleft) < 2:
+    if pokehash in poke_data['pokemon']:
+        if abs(poke_data['pokemon'][pokehash]['timeleft'] - timeleft) < 2:
             # Assume it's the same one and average the expiry time
-            DATA['pokemon'][pokehash]['timeleft'] += timeleft
-            DATA['pokemon'][pokehash]['timeleft'] /= 2
+            poke_data['pokemon'][pokehash]['timeleft'] += timeleft
+            poke_data['pokemon'][pokehash]['timeleft'] /= 2
         else:
             print('[-] Two %s at the same location (%s,%s)' % (name, lat, lng))
-            DATA['pokemon'][pokehash]['timeleft'] = min(DATA['pokemon'][pokehash]['timeleft'], timeleft)
+            poke_data['pokemon'][pokehash]['timeleft'] = min(poke_data['pokemon'][pokehash]['timeleft'], timeleft)
     else:
-        DATA['pokemon'][pokehash] = {
+        poke_data['pokemon'][pokehash] = {
             'id': poke_id,
             'name': name,
             'lat': lat,
@@ -146,10 +153,10 @@ def add_pokemon(poke_id, name, lat, lng, timestamp, timeleft):
 
 
 def add_pokestop(pokestop_id, lat, lng, timeleft):
-    if pokestop_id in DATA['pokestop']:
-        DATA['pokestop'][pokestop_id]['timeleft'] = timeleft
+    if pokestop_id in poke_data[('%s' % POKESTOP_KEY)]:
+        poke_data[POKESTOP_KEY][pokestop_id]['timeleft'] = timeleft
     else:
-        DATA['pokestop'][pokestop_id] = {
+        poke_data[POKESTOP_KEY][pokestop_id] = {
             'id': pokestop_id,
             'lat': lat,
             'lng': lng,
@@ -158,12 +165,12 @@ def add_pokestop(pokestop_id, lat, lng, timeleft):
 
 
 def add_gym(gym_id, team, lat, lng, points, pokemon_guard):
-    if gym_id in DATA['gym']:
-        DATA['gym'][gym_id]['team'] = team
-        DATA['gym'][gym_id]['points'] = points
-        DATA['gym'][gym_id]['guard'] = pokemon_guard
+    if gym_id in poke_data[GYM_KEY]:
+        poke_data[GYM_KEY][gym_id]['team'] = team
+        poke_data[GYM_KEY][gym_id]['points'] = points
+        poke_data[GYM_KEY][gym_id]['guard'] = pokemon_guard
     else:
-        DATA['gym'][gym_id] = {
+        poke_data[GYM_KEY][gym_id] = {
             'id': gym_id,
             'team': team,
             'lat': lat,
@@ -232,7 +239,11 @@ def api_req(api_endpoint, access_token, *mehs, **kw):
 
             protobuf = p_req.SerializeToString()
 
-            r = SESSION.post(api_endpoint, data=protobuf, verify=False)
+            session = requests.session()
+            session.headers.update({'User-Agent': 'Niantic App'})
+            session.verify = False
+
+            r = session.post(api_endpoint, data=protobuf, verify=False)
 
             p_ret = pokemon_pb2.ResponseEnvelop()
             p_ret.ParseFromString(r.content)
@@ -287,15 +298,24 @@ def get_profile(access_token, api, use_auth, *reqq):
     return api_req(api, access_token, req, useauth=use_auth)
 
 
-def get_api_endpoint(access_token, api=API_URL):
-    p_ret = get_profile(access_token, api, None)
-    try:
-        if p_ret.api_url is not None and p_ret.api_url != "":
-            return 'https://%s/rpc' % p_ret.api_url
-        else:
-            return None
-    except:
-        return None
+def get_api_endpoint(access_token, api=DEFAULT_API_URL, retry_count=DEFAULT_API_ENDPOINT_RETRIES):
+    profile = get_profile(access_token, api, None)
+    if retry_count < 0:
+        while is_valid_profile(profile):
+            print('[-] problems retrieving profile, retrying')
+            profile = get_profile(access_token, api, None)
+    else:
+        for i in range(retry_count):
+            print('[-] problems retrieving profile, retrying ({} out of {} retry attempts)'.format( i + 1, retry_count))
+            profile = get_profile(access_token, api, None)
+            if is_valid_profile(profile):
+                break
+
+    return 'https://%s/rpc' % profile.api_url if is_valid_profile(profile) else None
+
+
+def is_valid_profile(profile):
+    return profile is not None and profile.api_url is not None and profile.api_url != ""
 
 
 def login_ptc(username, password):
@@ -346,6 +366,21 @@ def login_ptc(username, password):
     r2 = session.post(LOGIN_OAUTH, data=data1)
     access_token = re.sub('&expires.*', '', r2.content)
     access_token = re.sub('.*access_token=', '', access_token)
+    return access_token
+
+
+def login(username, password, login_fn=login_ptc, retry_count=DEFAULT_MAX_LOGIN_RETRIES):
+    access_token = login_fn(username, password)
+    if retry_count < 0:
+        while access_token is not None:
+            print('[-] login failed, retrying')
+            access_token = login_fn(username, password)
+    else:
+        for i in range(retry_count):
+            print '[-] login failed, retrying ({} out of {} retry attempts)'.format(i + 1, retry_count)
+            access_token = login_fn(username, password)
+            if access_token is not None:
+                break
     return access_token
 
 
@@ -400,15 +435,14 @@ def heartbeat(api_endpoint, access_token, response):
             is_valid = False
 
 
-def scan(api_endpoint, access_token, response, origin_lat_long, pokemons):
+def scan(api_endpoint, access_token, response, origin_lat_long, pokemons, step_limit=NUM_STEPS):
     steps = 0
-    steplimit = NUM_STEPS
     pos = 1
     x = 0
     y = 0
     dx = 0
     dy = -1
-    while steps < steplimit ** 2:
+    while steps < step_limit ** 2:
         original_lat = FLOAT_LAT
         original_long = FLOAT_LONG
         parent = CellId.from_lat_lng(LatLng.from_degrees(FLOAT_LAT, FLOAT_LONG)).parent(15)
@@ -466,14 +500,84 @@ def scan(api_endpoint, access_token, response, origin_lat_long, pokemons):
 
         write_data_to_file()
 
-        if (-steplimit / 2 < x <= steplimit / 2) and (-steplimit / 2 < y <= steplimit / 2):
+        if (-step_limit / 2 < x <= step_limit / 2) and (-step_limit / 2 < y <= step_limit / 2):
             set_location_coords((x * 0.0025) + deflat, (y * 0.0025) + deflng, 0)
         if x == y or (x < 0 and x == -y) or (x > 0 and x == 1 - y):
             dx, dy = -dy, dx
         x, y = x + dx, y + dy
         steps += 1
 
-        print('[+] Scan: %0.1f %%' % (((steps + (pos * .25) - .25) / steplimit ** 2) * 100))
+        print('[+] Scan: %0.1f %%' % (((steps + (pos * .25) - .25) / step_limit ** 2) * 100))
+
+
+def init_arg_parser():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-u", "--username", help="PTC Username")
+    parser.add_argument("-p", "--password", help="PTC Password")
+    parser.add_argument("-l", "--location", help="Location", required=True)
+    parser.add_argument("-a", "--access-file", help="Access file")
+    parser.add_argument("-d", "--debug", help="Debug Mode", action='store_true')
+    parser.set_defaults(DEBUG=False)
+
+    return parser
+
+
+def generate_access_dict(args):
+    access_file = args.access_file if args.access_file is not None else DEFAULT_ACCESS_FILE
+
+    if args.username is not None and args.password is not None:
+        username = args.username
+        password = args.password
+        with open(access_file, 'w') as f:
+            access = {USERNAME_KEY: username, PASSWORD_KEY: password}
+            json.dump(access, f, indent=2)
+    else:
+        try:
+            with open(access_file) as f:
+                access = json.load(f)
+
+            username = access.get(USERNAME_KEY, None)
+            password = access.get(PASSWORD_KEY, None)
+            if username is None or password is None:
+                print('[!] ' + access_file + ' file corrupt, reinsert username and password')
+                return None
+        except IOError as e:
+            print('[!] You must insert username and password first!')
+            return None
+
+    return access
+
+
+def set_gmaps_data(gmaps_api_key, gmap_data_file):
+    if gmaps_api_key is not None:
+        with open(gmap_data_file, 'w') as f:
+            gdata = {'GOOGLE_MAPS_API_KEY': gmaps_api_key}
+            json.dump(gdata, f, indent=2)
+    else:
+        print('[-] Insert your GoogleMaps API key in config.json file!')
+
+
+def print_user_details(login_payload):
+    if login_payload is not None:
+        print('[+] Login successful')
+
+        if login_payload.payload != '':
+            payload = login_payload.payload[0]
+            profile = pokemon_pb2.ResponseEnvelop.ProfilePayload()
+            profile.ParseFromString(payload)
+            print('[+] Username: {}'.format(profile.profile.username))
+
+            creation_time = datetime.fromtimestamp(int(profile.profile.creation_time) / 1000)
+            print('[+] You are playing Pokemon Go since: {}'.format(
+                creation_time.strftime('%Y-%m-%d %H:%M:%S'),
+            ))
+
+            for curr in profile.profile.currency:
+                print('[+] {}: {}'.format(curr.type, curr.amount))
+        else:
+            print('[-] Profile payload empty')
+    else:
+        print('[-] Ooops...')
 
 
 def main():
@@ -482,13 +586,8 @@ def main():
 
     write_data_to_file()
     pokemons = json.load(open(path + '/pokemon.json'))
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-u", "--username", help="PTC Username")
-    parser.add_argument("-p", "--password", help="PTC Password")
-    parser.add_argument("-l", "--location", help="Location", required=True)
-    parser.add_argument("-a", "--access-file", help="Access file")
-    parser.add_argument("-d", "--debug", help="Debug Mode", action='store_true')
-    parser.set_defaults(DEBUG=False)
+
+    parser = init_arg_parser()
     args = parser.parse_args()
 
     if args.debug:
@@ -497,35 +596,18 @@ def main():
         print('[!] DEBUG mode on')
 
     set_location(args.location)
+    access_data = generate_access_dict(args)
 
-    access_file = args.access_file if args.access_file is not None else DEFAULT_ACCESS_FILE
-
-    if args.username is not None and args.password is not None:
-        username = args.username
-        password = args.password
-        with open(access_file, 'w') as f:
-            access = {'USERNAME': username, 'PASSWORD': password}
-            json.dump(access, f, indent=2)
-    else:
-        try:
-            with open(access_file) as f:
-                access = json.load(f)
-
-            username = access.get('USERNAME', None)
-            password = access.get('PASSWORD', None)
-            if username is None or password is None:
-                print('[!] ' + access_file + ' file corrupt, reinsert username and password')
-                return
-        except IOError as e:
-            print('[!] You must insert username and password first!')
-            return
+    set_gmaps_data(GMAPS_API_KEY, GMAP_DATA_FILE)
 
     while True:
         global is_valid
-        access_token = login_ptc(username, password)
+        access_token = login(access_data[USERNAME_KEY], access_data[PASSWORD_KEY])
+
         if access_token is None:
             print('[-] Error logging in: possible wrong username/password')
             return
+
         print('[+] RPC Session Token: {} ...'.format(access_token[:25]))
 
         api_endpoint = get_api_endpoint(access_token)
@@ -535,33 +617,7 @@ def main():
         print('[+] Received API endpoint: {}'.format(api_endpoint))
 
         response = get_profile(access_token, api_endpoint, None)
-        if response is not None:
-            print('[+] Login successful')
-
-            if response.payload != '':
-                payload = response.payload[0]
-                profile = pokemon_pb2.ResponseEnvelop.ProfilePayload()
-                profile.ParseFromString(payload)
-                print('[+] Username: {}'.format(profile.profile.username))
-
-                creation_time = datetime.fromtimestamp(int(profile.profile.creation_time) / 1000)
-                print('[+] You are playing Pokemon Go since: {}'.format(
-                    creation_time.strftime('%Y-%m-%d %H:%M:%S'),
-                ))
-
-                for curr in profile.profile.currency:
-                    print('[+] {}: {}'.format(curr.type, curr.amount))
-            else:
-                print('[-] Profile payload empty')
-        else:
-            print('[-] Ooops...')
-
-        if GMAPS_API_KEY is not None:
-            with open(GMAP_DATA_FILE, 'w') as f:
-                gdata = {'GOOGLE_MAPS_API_KEY': GMAPS_API_KEY}
-                json.dump(gdata, f, indent=2)
-        else:
-            print('[-] Insert your GoogleMaps API key in config.json file!')
+        print_user_details(response)
 
         origin_cell = LatLng.from_degrees(FLOAT_LAT, FLOAT_LONG)
 
