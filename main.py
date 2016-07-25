@@ -84,6 +84,12 @@ poke_data = {
     'gym': {}
 }
 
+# [ { 'USERNAME': 'user_name'
+#     'LOCATION' : { },
+#     'POKE_DATA' : {} } ]
+
+user_poke_data = []
+
 NUM_STEPS = 10
 PKMN_DATA_FILE = os.path.join('web', 'pkmn.json')
 PKSTOP_DATA_FILE = os.path.join('web', 'pkstop.json')
@@ -522,30 +528,31 @@ def init_arg_parser():
     return parser
 
 
-def generate_access_dict(args):
+def generate_access_list(args):
     access_file = args.access_file if args.access_file is not None else DEFAULT_ACCESS_FILE
 
     if args.username is not None and args.password is not None:
         username = args.username
         password = args.password
         with open(access_file, 'w') as f:
-            access = {USERNAME_KEY: username, PASSWORD_KEY: password}
-            json.dump(access, f, indent=2)
+            access_list = [{USERNAME_KEY: username, PASSWORD_KEY: password}]
+            json.dump(access_list, f, indent=2)
     else:
         try:
             with open(access_file) as f:
-                access = json.load(f)
+                access_list = json.load(f)
 
-            username = access.get(USERNAME_KEY, None)
-            password = access.get(PASSWORD_KEY, None)
-            if username is None or password is None:
-                print('[!] ' + access_file + ' file corrupt, reinsert username and password')
-                return None
+            for access in access_list:
+                username = access.get(USERNAME_KEY, None)
+                password = access.get(PASSWORD_KEY, None)
+                if username is None or password is None:
+                    print('[!] ' + access_file + ' file corrupt, reinsert username and password')
+                    return None
         except IOError as e:
             print('[!] You must insert username and password first!')
             return None
 
-    return access
+    return access_list
 
 
 def set_gmaps_data(gmaps_api_key, gmap_data_file):
@@ -561,7 +568,7 @@ def print_user_details(login_payload):
     if login_payload is not None:
         print('[+] Login successful')
 
-        if login_payload.payload != '':
+        if login_payload.payload:
             payload = login_payload.payload[0]
             profile = pokemon_pb2.ResponseEnvelop.ProfilePayload()
             profile.ParseFromString(payload)
@@ -580,6 +587,34 @@ def print_user_details(login_payload):
         print('[-] Ooops...')
 
 
+def run_poke_data_collection(access_data, pokemons):
+    global is_valid
+    access_token = login(access_data[USERNAME_KEY], access_data[PASSWORD_KEY])
+
+    if access_token is None:
+        print('[-] Error logging in: possible wrong username/password')
+        return
+
+    print('[+] RPC Session Token: {} ...'.format(access_token[:25]))
+
+    api_endpoint = get_api_endpoint(access_token)
+    if api_endpoint is None:
+        print('[-] RPC server offline')
+        return
+    print('[+] Received API endpoint: {}'.format(api_endpoint))
+
+    response = get_profile(access_token, api_endpoint, None)
+    print_user_details(response)
+
+    origin_cell = LatLng.from_degrees(FLOAT_LAT, FLOAT_LONG)
+
+    start_time = time.time()
+    elapsed_time = time.time() - start_time
+    while is_valid and elapsed_time < REFRESH_TIME:
+        scan(api_endpoint, access_token, response, origin_cell, pokemons)
+        elapsed_time = time.time()
+
+
 def main():
     full_path = os.path.realpath(__file__)
     (path, filename) = os.path.split(full_path)
@@ -595,37 +630,15 @@ def main():
         DEBUG = True
         print('[!] DEBUG mode on')
 
+    user_data = []
+    access_list = generate_access_list(args)
     set_location(args.location)
-    access_data = generate_access_dict(args)
 
     set_gmaps_data(GMAPS_API_KEY, GMAP_DATA_FILE)
 
     while True:
-        global is_valid
-        access_token = login(access_data[USERNAME_KEY], access_data[PASSWORD_KEY])
-
-        if access_token is None:
-            print('[-] Error logging in: possible wrong username/password')
-            return
-
-        print('[+] RPC Session Token: {} ...'.format(access_token[:25]))
-
-        api_endpoint = get_api_endpoint(access_token)
-        if api_endpoint is None:
-            print('[-] RPC server offline')
-            return
-        print('[+] Received API endpoint: {}'.format(api_endpoint))
-
-        response = get_profile(access_token, api_endpoint, None)
-        print_user_details(response)
-
-        origin_cell = LatLng.from_degrees(FLOAT_LAT, FLOAT_LONG)
-
-        start_time = time.time()
-        elapsed_time = time.time() - start_time
-        while is_valid and elapsed_time < REFRESH_TIME:
-            scan(api_endpoint, access_token, response, origin_cell, pokemons)
-            elapsed_time = time.time()
+        for access_data in access_list:
+            run_poke_data_collection(access_data, pokemons)
 
 
 if __name__ == '__main__':
