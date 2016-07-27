@@ -15,6 +15,8 @@ from google.protobuf.internal import encoder
 
 import pokemon_pb2
 
+ADDRESS_KEY = 'address'
+
 try:
     from requests.packages.urllib3.exceptions import InsecureRequestWarning
 
@@ -30,8 +32,8 @@ def encode(cellid):
     return ''.join(output)
 
 
-def get_neighbors():
-    origin_cell = CellId.from_lat_lng(LatLng.from_degrees(FLOAT_LAT, FLOAT_LONG)).parent(15)
+def get_neighbors(scan_location):
+    origin_cell = CellId.from_lat_lng(LatLng.from_degrees(scan_location[LAT_KEY], scan_location[LONG_KEY])).parent(15)
     walk = [origin_cell.id()]
     # 10 before and 10 after
     next_cell = origin_cell.next()
@@ -48,7 +50,14 @@ with open('config.json') as config_file:
     credentials = json.load(config_file)
 
 PASSWORD_KEY = 'PASSWORD'
-USERNAME_KEY = 'USERNAME'
+USER_NAME_KEY = 'USERNAME'
+LOCATION_KEY = 'LOCATION'
+ALT_KEY = 'alt'
+LONG_KEY = 'lng'
+LAT_KEY = 'lat'
+BIN_ALT_KEY = 'bin_alt'
+BIN_LONG_KEY = 'bin_lng'
+BIN_LAT_KEY = 'bin_lat'
 GYM_KEY = 'gym'
 POKESTOP_KEY = 'pokestop'
 
@@ -68,12 +77,6 @@ DEFAULT_API_ENDPOINT_RETRIES = 5
 is_valid = True
 
 DEBUG = False
-COORDS_LATITUDE = 0
-COORDS_LONGITUDE = 0
-COORDS_ALTITUDE = 0
-FLOAT_LAT = 0
-FLOAT_LONG = 0
-deflat, deflng = 0, 0
 default_step = 0.001
 
 # poke_data_lock;
@@ -84,9 +87,8 @@ poke_data = {
     'gym': {}
 }
 
-# [ { 'USERNAME': 'user_name'
-#     'LOCATION' : { },
-#     'POKE_DATA' : {} } ]
+# { 'user_name' : { lat, lng, bin_lat, bin_lng, bin_alt }
+user_scan_locations = {}
 
 user_poke_data = []
 
@@ -98,7 +100,7 @@ GMAP_DATA_FILE = os.path.join('web', 'gmap.json')
 
 REFRESH_TIME = 1200
 
-DEFAULT_ACCESS_FILE = 'access.json'
+DEFAULT_USERS_FILE = 'users.json'
 
 
 def f2i(x):
@@ -151,8 +153,8 @@ def add_pokemon(poke_id, name, lat, lng, timestamp, timeleft):
         poke_data['pokemon'][pokehash] = {
             'id': poke_id,
             'name': name,
-            'lat': lat,
-            'lng': lng,
+            LAT_KEY: lat,
+            LONG_KEY: lng,
             'timestamp': timestamp,
             'timeleft': timeleft
         }
@@ -164,8 +166,8 @@ def add_pokestop(pokestop_id, lat, lng, timeleft):
     else:
         poke_data[POKESTOP_KEY][pokestop_id] = {
             'id': pokestop_id,
-            'lat': lat,
-            'lng': lng,
+            LAT_KEY: lat,
+            LONG_KEY: lng,
             'timeleft': timeleft
         }
 
@@ -179,47 +181,14 @@ def add_gym(gym_id, team, lat, lng, points, pokemon_guard):
         poke_data[GYM_KEY][gym_id] = {
             'id': gym_id,
             'team': team,
-            'lat': lat,
-            'lng': lng,
+            LAT_KEY: lat,
+            LONG_KEY: lng,
             'points': points,
             'guard': pokemon_guard
         }
 
 
-def set_location(location_name):
-    geolocator = GoogleV3()
-    prog = re.compile('^(\-?\d+(\.\d+)?),\s*(\-?\d+(\.\d+)?)$')
-    global deflat
-    global deflng
-    if prog.match(location_name):
-        local_lat, local_lng = [float(x) for x in location_name.split(",")]
-        alt = 0
-        deflat, deflng = local_lat, local_lng
-    else:
-        loc = geolocator.geocode(location_name)
-        deflat, deflng = local_lat, local_lng = loc.latitude, loc.longitude
-        alt = loc.altitude
-        print '[!] Your given location: {}'.format(loc.address.encode('utf-8'))
-
-    print('[!] lat/long/alt: {} {} {}'.format(local_lat, local_lng, alt))
-    set_location_coords(local_lat, local_lng, alt)
-
-
-def set_location_coords(lat, lng, alt):
-    global COORDS_LATITUDE, COORDS_LONGITUDE, COORDS_ALTITUDE
-    global FLOAT_LAT, FLOAT_LONG
-    FLOAT_LAT = lat
-    FLOAT_LONG = lng
-    COORDS_LATITUDE = f2i(lat)  # 0x4042bd7c00000000 # f2i(lat)
-    COORDS_LONGITUDE = f2i(lng)  # 0xc05e8aae40000000 #f2i(lng)
-    COORDS_ALTITUDE = f2i(alt)
-
-
-def get_location_coords():
-    return COORDS_LATITUDE, COORDS_LONGITUDE, COORDS_ALTITUDE
-
-
-def api_req(api_endpoint, access_token, *mehs, **kw):
+def api_req(api_endpoint, access_token, scan_location, *mehs, **kw):
     while True:
         try:
             p_req = pokemon_pb2.RequestEnvelop()
@@ -227,7 +196,9 @@ def api_req(api_endpoint, access_token, *mehs, **kw):
 
             p_req.unknown1 = 2
 
-            p_req.latitude, p_req.longitude, p_req.altitude = get_location_coords()
+            p_req.latitude = scan_location[BIN_LAT_KEY]
+            p_req.longitude = scan_location[BIN_LONG_KEY]
+            p_req.altitude = scan_location[BIN_ALT_KEY]
 
             p_req.unknown12 = 989
 
@@ -273,7 +244,7 @@ def api_req(api_endpoint, access_token, *mehs, **kw):
             continue
 
 
-def get_profile(access_token, api, use_auth, *reqq):
+def get_profile(access_token, api, use_auth, scan_location, *reqq):
     req = pokemon_pb2.RequestEnvelop()
 
     req1 = req.requests.add()
@@ -301,19 +272,19 @@ def get_profile(access_token, api, use_auth, *reqq):
     if len(reqq) >= 5:
         req5.MergeFrom(reqq[4])
 
-    return api_req(api, access_token, req, useauth=use_auth)
+    return api_req(api, access_token, scan_location, req, useauth=use_auth)
 
 
-def get_api_endpoint(access_token, api=DEFAULT_API_URL, retry_count=DEFAULT_API_ENDPOINT_RETRIES):
-    profile = get_profile(access_token, api, None)
+def get_api_endpoint(access_token, scan_location, api=DEFAULT_API_URL, retry_count=DEFAULT_API_ENDPOINT_RETRIES):
+    profile = get_profile(access_token, api, None, scan_location)
     if retry_count < 0:
         while is_valid_profile(profile):
             print('[-] problems retrieving profile, retrying')
-            profile = get_profile(access_token, api, None)
+            profile = get_profile(access_token, api, None, scan_location)
     else:
         for i in range(retry_count):
-            print('[-] problems retrieving profile, retrying ({} out of {} retry attempts)'.format( i + 1, retry_count))
-            profile = get_profile(access_token, api, None)
+            print('[-] problems retrieving profile, retrying ({} out of {} retry attempts)'.format(i + 1, retry_count))
+            profile = get_profile(access_token, api, None, scan_location)
             if is_valid_profile(profile):
                 break
 
@@ -390,7 +361,7 @@ def login(username, password, login_fn=login_ptc, retry_count=DEFAULT_MAX_LOGIN_
     return access_token
 
 
-def raw_heartbeat(api_endpoint, access_token, response):
+def raw_heartbeat(api_endpoint, access_token, use_auth, scan_location):
     m4 = pokemon_pb2.RequestEnvelop.Requests()
     m = pokemon_pb2.RequestEnvelop.MessageSingleInt()
     m.f1 = int(time.time() * 1000)
@@ -400,20 +371,21 @@ def raw_heartbeat(api_endpoint, access_token, response):
     m.bytes = "05daf51635c82611d1aac95c0b051d3ec088a930"
     m5.message = m.SerializeToString()
 
-    walk = sorted(get_neighbors())
+    walk = sorted(get_neighbors(scan_location))
 
     m1 = pokemon_pb2.RequestEnvelop.Requests()
     m1.type = 106
     m = pokemon_pb2.RequestEnvelop.MessageQuad()
     m.f1 = ''.join(map(encode, walk))
     m.f2 = "\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000"
-    m.lat = COORDS_LATITUDE
-    m.long = COORDS_LONGITUDE
+    m.lat = scan_location[BIN_LAT_KEY]
+    m.long = scan_location[BIN_LONG_KEY]
     m1.message = m.SerializeToString()
     response = get_profile(
         access_token,
         api_endpoint,
-        response.unknown7,
+        use_auth,
+        scan_location,
         m1,
         pokemon_pb2.RequestEnvelop.Requests(),
         m4,
@@ -428,11 +400,11 @@ def raw_heartbeat(api_endpoint, access_token, response):
     return h
 
 
-def heartbeat(api_endpoint, access_token, response):
+def heartbeat(api_endpoint, access_token, use_auth, scan_location):
     global is_valid
     while True:
         try:
-            h = raw_heartbeat(api_endpoint, access_token, response)
+            h = raw_heartbeat(api_endpoint, access_token, use_auth, scan_location)
             return h
         except Exception, e:
             if DEBUG:
@@ -441,26 +413,26 @@ def heartbeat(api_endpoint, access_token, response):
             is_valid = False
 
 
-def scan(api_endpoint, access_token, response, origin_lat_long, pokemons, step_limit=NUM_STEPS):
+def scan(api_endpoint, access_token, use_auth, original_cell, pokemons, user_data, initial_user_scan_location, step_limit=NUM_STEPS):
     steps = 0
     pos = 1
     x = 0
     y = 0
     dx = 0
     dy = -1
+    scanner_location = initial_user_scan_location
     while steps < step_limit ** 2:
-        original_lat = FLOAT_LAT
-        original_long = FLOAT_LONG
-        parent = CellId.from_lat_lng(LatLng.from_degrees(FLOAT_LAT, FLOAT_LONG)).parent(15)
+        original_lat = scanner_location[LAT_KEY]
+        original_long = scanner_location[LONG_KEY]
+        parent = CellId.from_lat_lng(LatLng.from_degrees(original_lat, original_long)).parent(15)
 
-        h = heartbeat(api_endpoint, access_token, response)
+        h = heartbeat(api_endpoint, access_token, use_auth, scanner_location)
         hs = [h]
         seen = set([])
         for child in parent.children():
             latlng = LatLng.from_point(Cell(child).get_center())
-            set_location_coords(latlng.lat().degrees, latlng.lng().degrees, 0)
-            hs.append(heartbeat(api_endpoint, access_token, response))
-        set_location_coords(original_lat, original_long, 0)
+            child_scan_location = generate_scan_location(latlng.lat().degrees, latlng.lng().degrees, 0)
+            hs.append(heartbeat(api_endpoint, access_token, use_auth, child_scan_location))
 
         visible = []
 
@@ -491,10 +463,10 @@ def scan(api_endpoint, access_token, response, origin_lat_long, pokemons, step_l
 
         for poke in visible:
             other = LatLng.from_degrees(poke.Latitude, poke.Longitude)
-            diff = other - origin_lat_long
+            diff = other - original_cell
             # print(diff)
-            difflat = diff.lat().degrees
-            difflng = diff.lng().degrees
+            # difflat = diff.lat().degrees
+            # difflng = diff.lng().degrees
 
             print("[+] (%s) %s is visible at (%s, %s) for %s seconds" % (
                 poke.pokemon.PokemonId, pokemons[poke.pokemon.PokemonId - 1]['Name'], poke.Latitude, poke.Longitude,
@@ -507,7 +479,9 @@ def scan(api_endpoint, access_token, response, origin_lat_long, pokemons, step_l
         write_data_to_file()
 
         if (-step_limit / 2 < x <= step_limit / 2) and (-step_limit / 2 < y <= step_limit / 2):
-            set_location_coords((x * 0.0025) + deflat, (y * 0.0025) + deflng, 0)
+            scanner_location = generate_scan_location((x * 0.0025) + user_data[LOCATION_KEY][LAT_KEY],
+                                                      (y * 0.0025) + user_data[LOCATION_KEY][LONG_KEY],
+                                                      0)
         if x == y or (x < 0 and x == -y) or (x > 0 and x == 1 - y):
             dx, dy = -dy, dx
         x, y = x + dx, y + dy
@@ -521,7 +495,7 @@ def init_arg_parser():
     parser.add_argument("-u", "--username", help="PTC Username")
     parser.add_argument("-p", "--password", help="PTC Password")
     parser.add_argument("-l", "--location", help="Location", required=True)
-    parser.add_argument("-a", "--access-file", help="Access file")
+    parser.add_argument("--users-file", help="User data file (username, password, and location)")
     parser.add_argument("-d", "--debug", help="Debug Mode", action='store_true')
     parser.set_defaults(DEBUG=False)
 
@@ -529,24 +503,24 @@ def init_arg_parser():
 
 
 def generate_access_list(args):
-    access_file = args.access_file if args.access_file is not None else DEFAULT_ACCESS_FILE
+    users_file = args.users_file if args.users_file is not None else DEFAULT_USERS_FILE
 
     if args.username is not None and args.password is not None:
         username = args.username
         password = args.password
-        with open(access_file, 'w') as f:
-            access_list = [{USERNAME_KEY: username, PASSWORD_KEY: password}]
+        with open(users_file, 'w') as f:
+            access_list = [{USER_NAME_KEY: username, PASSWORD_KEY: password}]
             json.dump(access_list, f, indent=2)
     else:
         try:
-            with open(access_file) as f:
+            with open(users_file) as f:
                 access_list = json.load(f)
 
             for access in access_list:
-                username = access.get(USERNAME_KEY, None)
+                username = access.get(USER_NAME_KEY, None)
                 password = access.get(PASSWORD_KEY, None)
                 if username is None or password is None:
-                    print('[!] ' + access_file + ' file corrupt, reinsert username and password')
+                    print('[!] ' + users_file + ' file corrupt, reinsert username and password')
                     return None
         except IOError as e:
             print('[!] You must insert username and password first!')
@@ -587,9 +561,24 @@ def print_user_details(login_payload):
         print('[-] Ooops...')
 
 
-def run_poke_data_collection(access_data, pokemons):
+def generate_scan_location(lat, lng, alt):
+    return {
+        LAT_KEY: lat,
+        LONG_KEY: lng,
+        ALT_KEY: alt,
+        BIN_LAT_KEY: f2i(lat),
+        BIN_LONG_KEY: f2i(lng),
+        BIN_ALT_KEY: f2i(alt)
+    }
+
+
+def run_poke_data_collection(user_data, pokemons):
     global is_valid
-    access_token = login(access_data[USERNAME_KEY], access_data[PASSWORD_KEY])
+    initial_scan_location = generate_scan_location(user_data[LOCATION_KEY][LAT_KEY],
+                                                   user_data[LOCATION_KEY][LONG_KEY],
+                                                   user_data[LOCATION_KEY][ALT_KEY])
+
+    access_token = login(user_data[USER_NAME_KEY], user_data[PASSWORD_KEY])
 
     if access_token is None:
         print('[-] Error logging in: possible wrong username/password')
@@ -597,30 +586,85 @@ def run_poke_data_collection(access_data, pokemons):
 
     print('[+] RPC Session Token: {} ...'.format(access_token[:25]))
 
-    api_endpoint = get_api_endpoint(access_token)
+    api_endpoint = get_api_endpoint(access_token, initial_scan_location)
     if api_endpoint is None:
         print('[-] RPC server offline')
         return
     print('[+] Received API endpoint: {}'.format(api_endpoint))
 
-    response = get_profile(access_token, api_endpoint, None)
+    response = get_profile(access_token, api_endpoint, None, initial_scan_location)
     print_user_details(response)
 
-    origin_cell = LatLng.from_degrees(FLOAT_LAT, FLOAT_LONG)
+    origin_cell = LatLng.from_degrees(user_data[LOCATION_KEY][LAT_KEY], user_data[LOCATION_KEY][LAT_KEY])
 
     start_time = time.time()
     elapsed_time = time.time() - start_time
     while is_valid and elapsed_time < REFRESH_TIME:
-        scan(api_endpoint, access_token, response, origin_cell, pokemons)
+        scan(api_endpoint, access_token, response.unknown7, origin_cell, pokemons, user_data, initial_scan_location)
         elapsed_time = time.time()
+
+
+def generate_user_location(address):
+    geolocator = GoogleV3()
+    lat_long_regex = re.compile('^(\-?\d+(\.\d+)?),\s*(\-?\d+(\.\d+)?)$')
+    location = {ADDRESS_KEY: address}
+    if lat_long_regex.match(address):
+        local_lat, local_lng = [float(x) for x in address.split(",")]
+        lat_long_alt = {LAT_KEY: local_lat, LONG_KEY: local_lng, ALT_KEY: 0}
+    else:
+        loc = geolocator.geocode(address)
+        lat_long_alt = {LAT_KEY: loc.latitude, LONG_KEY: loc.longitude, ALT_KEY: loc.altitude}
+        print '[!] Your given location: {}'.format(loc.address.encode('utf-8'))
+
+    location.update(lat_long_alt)
+    print('[!] lat/long/alt: {} {} {}'.format(location[LAT_KEY], location[LONG_KEY], location[ALT_KEY]))
+    return location
+
+
+def generate_users_data(args):
+    users_file = args.users_file if args.users_file is not None else DEFAULT_USERS_FILE
+
+    if args.username is not None and args.password is not None and args.location is not None:
+        users_data = [{
+            USER_NAME_KEY: args.username,
+            PASSWORD_KEY: args.password,
+            LOCATION_KEY: generate_user_location(args.location)
+        }]
+    else:
+        try:
+            with open(users_file) as f:
+                users_data = json.load(f)
+
+            for user_data in users_data:
+                user_name = user_data.get(USER_NAME_KEY, None)
+                # TODO: Make these validation checks a function
+                if user_name is None:
+                    print('[!] Could not find value for \'{}\' in {}'.format(USER_NAME_KEY, users_file))
+                    return None
+                password = user_data.get(PASSWORD_KEY, None)
+                if password is None:
+                    print('[!] Could not find value for \'{}\' in {}'.format(PASSWORD_KEY, users_file))
+                    return None
+                location = user_data.get(LOCATION_KEY, None)
+                if location is None:
+                    print('[!] Could not find value for \'{}\' in {}'.format(LOCATION_KEY, users_file))
+                    return None
+
+                if not location.get(LAT_KEY, None) or not location.get(LONG_KEY, None) or not location.get(ALT_KEY, None):
+                    user_data[LOCATION_KEY] = generate_user_location(location[ADDRESS_KEY])
+        except IOError as e:
+            print('[!] Error reading {}!'.format(users_file))
+            return None
+
+    return users_data
 
 
 def main():
     full_path = os.path.realpath(__file__)
     (path, filename) = os.path.split(full_path)
 
-    write_data_to_file()
-    pokemons = json.load(open(path + '/pokemon.json'))
+    # TODO: This call may not be needed
+    # write_data_to_file()
 
     parser = init_arg_parser()
     args = parser.parse_args()
@@ -630,15 +674,16 @@ def main():
         DEBUG = True
         print('[!] DEBUG mode on')
 
-    user_data = []
-    access_list = generate_access_list(args)
-    set_location(args.location)
+    users_data = generate_users_data(args)
 
+    # set_location(args.location)
     set_gmaps_data(GMAPS_API_KEY, GMAP_DATA_FILE)
 
+    pokemons = json.load(open(path + '/pokemon.json'))
+
     while True:
-        for access_data in access_list:
-            run_poke_data_collection(access_data, pokemons)
+        for user_data in users_data:
+            run_poke_data_collection(user_data, pokemons)
 
 
 if __name__ == '__main__':
