@@ -10,6 +10,7 @@ import struct
 import time
 from datetime import datetime
 from multiprocessing.pool import ThreadPool
+from gpsoauth import perform_master_login, perform_oauth
 
 import requests
 from geopy.geocoders import GoogleV3
@@ -51,6 +52,7 @@ def get_neighbors(scan_location):
 with open('config.json') as config_file:
     credentials = json.load(config_file)
 
+AUTH_TYPE_KEY = 'AUTHTYPE'
 PASSWORD_KEY = 'PASSWORD'
 USER_NAME_KEY = 'USERNAME'
 LOCATION_KEY = 'LOCATION'
@@ -208,7 +210,7 @@ def add_gym(gym_id, team, lat, lng, points, pokemon_guard):
         poke_data_lock.release()
 
 
-def api_req(api_endpoint, access_token, scan_location, *mehs, **kw):
+def api_req(auth_type, api_endpoint, access_token, scan_location, *mehs, **kw):
     while True:
         try:
             p_req = pokemon_pb2.RequestEnvelop()
@@ -223,7 +225,7 @@ def api_req(api_endpoint, access_token, scan_location, *mehs, **kw):
             p_req.unknown12 = 989
 
             if 'useauth' not in kw or not kw['useauth']:
-                p_req.auth.provider = 'ptc'
+                p_req.auth.provider = auth_type
                 p_req.auth.token.contents = access_token
                 p_req.auth.token.unknown13 = 14
             else:
@@ -264,7 +266,7 @@ def api_req(api_endpoint, access_token, scan_location, *mehs, **kw):
             continue
 
 
-def get_profile(access_token, api, use_auth, scan_location, *reqq):
+def get_profile(auth_type, access_token, api, use_auth, scan_location, *reqq):
     req = pokemon_pb2.RequestEnvelop()
 
     req1 = req.requests.add()
@@ -292,27 +294,39 @@ def get_profile(access_token, api, use_auth, scan_location, *reqq):
     if len(reqq) >= 5:
         req5.MergeFrom(reqq[4])
 
-    return api_req(api, access_token, scan_location, req, useauth=use_auth)
+    return api_req(auth_type, api, access_token, scan_location, req, useauth=use_auth)
 
 
-def get_api_endpoint(access_token, scan_location, api=DEFAULT_API_URL, retry_count=DEFAULT_API_ENDPOINT_RETRIES):
-    profile = get_profile(access_token, api, None, scan_location)
+def get_api_endpoint(auth_type, access_token, scan_location, api=DEFAULT_API_URL, retry_count=DEFAULT_API_ENDPOINT_RETRIES):
+    profile = get_profile(auth_type, access_token, api, None, scan_location)
     if retry_count < 0:
         while is_valid_profile(profile):
             print('[-] problems retrieving profile, retrying')
-            profile = get_profile(access_token, api, None, scan_location)
+            profile = get_profile(auth_type, access_token, api, None, scan_location)
     else:
         for i in range(retry_count):
             print('[-] problems retrieving profile, retrying ({} out of {} retry attempts)'.format(i + 1, retry_count))
-            profile = get_profile(access_token, api, None, scan_location)
             if is_valid_profile(profile):
                 break
+            profile = get_profile(auth_type, access_token, api, None, scan_location)
 
     return 'https://%s/rpc' % profile.api_url if is_valid_profile(profile) else None
 
 
 def is_valid_profile(profile):
     return profile is not None and profile.api_url is not None and profile.api_url != ""
+
+def login_google(username, password):
+    GOOGLE_LOGIN_ANDROID_ID = '9774d56d682e549c'
+    GOOGLE_LOGIN_SERVICE= 'audience:server:client_id:848232511240-7so421jotr2609rmqakceuu1luuq0ptb.apps.googleusercontent.com'
+    GOOGLE_LOGIN_APP = 'com.nianticlabs.pokemongo'
+    GOOGLE_LOGIN_CLIENT_SIG = '321187995bc7cdc2b5fc91b11a96e2baa8602c62'
+
+    login = perform_master_login(username, password, GOOGLE_LOGIN_ANDROID_ID)
+    login = perform_oauth(username, login.get('Token', ''), GOOGLE_LOGIN_ANDROID_ID, GOOGLE_LOGIN_SERVICE, GOOGLE_LOGIN_APP,
+                          GOOGLE_LOGIN_CLIENT_SIG)
+
+    return login.get('Auth')
 
 
 def login_ptc(username, password):
@@ -381,7 +395,7 @@ def login(username, password, login_fn=login_ptc, retry_count=DEFAULT_MAX_LOGIN_
     return access_token
 
 
-def raw_heartbeat(api_endpoint, access_token, use_auth, scan_location):
+def raw_heartbeat(auth_type, api_endpoint, access_token, use_auth, scan_location):
     m4 = pokemon_pb2.RequestEnvelop.Requests()
     m = pokemon_pb2.RequestEnvelop.MessageSingleInt()
     m.f1 = int(time.time() * 1000)
@@ -402,6 +416,7 @@ def raw_heartbeat(api_endpoint, access_token, use_auth, scan_location):
     m.long = scan_location[BIN_LONG_KEY]
     m1.message = m.SerializeToString()
     response = get_profile(
+        auth_type,
         access_token,
         api_endpoint,
         use_auth,
@@ -420,11 +435,11 @@ def raw_heartbeat(api_endpoint, access_token, use_auth, scan_location):
     return h
 
 
-def heartbeat(api_endpoint, access_token, use_auth, scan_location, user_name):
+def heartbeat(auth_type, api_endpoint, access_token, use_auth, scan_location, user_name):
     global is_valid
     while True:
         try:
-            h = raw_heartbeat(api_endpoint, access_token, use_auth, scan_location)
+            h = raw_heartbeat(auth_type, api_endpoint, access_token, use_auth, scan_location)
             return h
         except Exception, e:
             if DEBUG:
@@ -433,7 +448,7 @@ def heartbeat(api_endpoint, access_token, use_auth, scan_location, user_name):
             is_valid[user_name] = False
 
 
-def scan(api_endpoint, access_token, use_auth, original_cell, user_data, initial_user_scan_location, step_limit=NUM_STEPS):
+def scan(auth_type, api_endpoint, access_token, use_auth, original_cell, user_data, initial_user_scan_location, step_limit=NUM_STEPS):
     steps = 0
     pos = 1
     x = 0
@@ -446,13 +461,13 @@ def scan(api_endpoint, access_token, use_auth, original_cell, user_data, initial
         original_long = scanner_location[LONG_KEY]
         parent = CellId.from_lat_lng(LatLng.from_degrees(original_lat, original_long)).parent(15)
 
-        h = heartbeat(api_endpoint, access_token, use_auth, scanner_location, user_data[USER_NAME_KEY])
+        h = heartbeat(auth_type, api_endpoint, access_token, use_auth, scanner_location, user_data[USER_NAME_KEY])
         hs = [h]
         seen = set([])
         for child in parent.children():
             latlng = LatLng.from_point(Cell(child).get_center())
             child_scan_location = generate_scan_location(latlng.lat().degrees, latlng.lng().degrees, 0)
-            hs.append(heartbeat(api_endpoint, access_token, use_auth, child_scan_location, user_data[USER_NAME_KEY]))
+            hs.append(heartbeat(auth_type, api_endpoint, access_token, use_auth, child_scan_location, user_data[USER_NAME_KEY]))
 
         visible = []
 
@@ -513,10 +528,11 @@ def scan(api_endpoint, access_token, use_auth, original_cell, user_data, initial
 
 def init_arg_parser():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-u", "--username", help="PTC Username")
-    parser.add_argument("-p", "--password", help="PTC Password")
-    parser.add_argument("-l", "--location", help="Location", required=True)
-    parser.add_argument("--users-file", help="User data file (username, password, and location)")
+    parser.add_argument("-a", "--auth-type", help="Auth Type (google or ptc)")
+    parser.add_argument("-u", "--username", help="Username")
+    parser.add_argument("-p", "--password", help="Password")
+    parser.add_argument("-l", "--location", help="Location")
+    parser.add_argument("--users-file", help="User data file (auth-type, username, password, and location)")
     parser.add_argument("-d", "--debug", help="Debug Mode", action='store_true')
     parser.set_defaults(DEBUG=False)
 
@@ -603,7 +619,13 @@ def run_poke_data_collection(user_data):
                                                        user_data[LOCATION_KEY][LONG_KEY],
                                                        user_data[LOCATION_KEY][ALT_KEY])
 
-        access_token = login(user_name, user_data[PASSWORD_KEY])
+        if user_data[AUTH_TYPE_KEY] == 'google':
+            access_token = login(user_name, user_data[PASSWORD_KEY], login_google)
+        elif user_data[AUTH_TYPE_KEY] == 'ptc':
+            access_token = login(user_name, user_data[PASSWORD_KEY])
+        else:
+            print('[-] Error logging in: No valid Auth Type')
+            return
 
         if access_token is None:
             print('[-] Error logging in: possible wrong username/password')
@@ -611,13 +633,13 @@ def run_poke_data_collection(user_data):
 
         print('[+] RPC Session Token: {} ...'.format(access_token[:25]))
 
-        api_endpoint = get_api_endpoint(access_token, initial_scan_location)
+        api_endpoint = get_api_endpoint(user_data[AUTH_TYPE_KEY], access_token, initial_scan_location)
         if api_endpoint is None:
             print('[-] RPC server offline')
             return
         print('[+] Received API endpoint: {}'.format(api_endpoint))
 
-        response = get_profile(access_token, api_endpoint, None, initial_scan_location)
+        response = get_profile(user_data[AUTH_TYPE_KEY], access_token, api_endpoint, None, initial_scan_location)
         print_user_details(response)
 
         origin_cell = LatLng.from_degrees(user_data[LOCATION_KEY][LAT_KEY], user_data[LOCATION_KEY][LAT_KEY])
@@ -625,7 +647,7 @@ def run_poke_data_collection(user_data):
         start_time = time.time()
         elapsed_time = time.time() - start_time
         while is_valid[user_name] and elapsed_time < REFRESH_TIME:
-            scan(api_endpoint, access_token, response.unknown7, origin_cell, user_data, initial_scan_location)
+            scan(user_data[AUTH_TYPE_KEY], api_endpoint, access_token, response.unknown7, origin_cell, user_data, initial_scan_location)
             elapsed_time = time.time()
 
 
@@ -649,8 +671,9 @@ def generate_user_location(address):
 def generate_users_data(args):
     users_file = args.users_file if args.users_file is not None else DEFAULT_USERS_FILE
 
-    if args.username is not None and args.password is not None and args.location is not None:
+    if args.auth_type is not None and args.username is not None and args.password is not None and args.location is not None:
         users_data = [{
+            AUTH_TYPE_KEY: args.auth_type,
             USER_NAME_KEY: args.username,
             PASSWORD_KEY: args.password,
             LOCATION_KEY: generate_user_location(args.location)
@@ -661,8 +684,12 @@ def generate_users_data(args):
                 users_data = json.load(f)
 
             for user_data in users_data:
-                user_name = user_data.get(USER_NAME_KEY, None)
                 # TODO: Make these validation checks a function
+                auth_type = user_data.get(AUTH_TYPE_KEY, None)
+                if auth_type is None:
+                    print('[!] Could not find value for \'{}\' in {}'.format(AUTH_TYPE_KEY, users_file))
+                    return None
+                user_name = user_data.get(USER_NAME_KEY, None)
                 if user_name is None:
                     print('[!] Could not find value for \'{}\' in {}'.format(USER_NAME_KEY, users_file))
                     return None
