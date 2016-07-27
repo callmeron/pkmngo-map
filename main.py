@@ -3,11 +3,13 @@
 
 import argparse
 import json
+import multiprocessing
 import os
 import re
 import struct
 import time
 from datetime import datetime
+from multiprocessing.pool import ThreadPool
 
 import requests
 from geopy.geocoders import GoogleV3
@@ -74,18 +76,18 @@ LOGIN_OAUTH = 'https://sso.pokemon.com/sso/oauth2.0/accessToken'
 DEFAULT_MAX_LOGIN_RETRIES = 5
 DEFAULT_API_ENDPOINT_RETRIES = 5
 
-is_valid = True
+is_valid = {}
 
 DEBUG = False
 default_step = 0.001
 
-# poke_data_lock;
-
+poke_data_lock = multiprocessing.Lock()
 poke_data = {
     'pokemon': {},
     'pokestop': {},
     'gym': {}
 }
+pokemons = []
 
 # { 'user_name' : { lat, lng, bin_lat, bin_lng, bin_alt }
 user_scan_locations = {}
@@ -102,7 +104,6 @@ REFRESH_TIME = 1200
 
 DEFAULT_USERS_FILE = 'users.json'
 
-
 def f2i(x):
     return struct.unpack('<Q', struct.pack('<d', x))[0]
 
@@ -116,76 +117,95 @@ def h2f(x):
 
 
 def prune():
+    poke_data_lock.acquire()
     # prune despawned pokemon
-    cur_time = int(time.time())
-    for (pokehash, poke) in poke_data['pokemon'].items():
-        poke['timeleft'] = poke['timeleft'] - (cur_time - poke['timestamp'])
-        poke['timestamp'] = cur_time
-        if poke['timeleft'] <= 0:
-            del poke_data['pokemon'][pokehash]
+    try:
+        cur_time = int(time.time())
+        for (pokehash, poke) in poke_data['pokemon'].items():
+            poke['timeleft'] = poke['timeleft'] - (cur_time - poke['timestamp'])
+            poke['timestamp'] = cur_time
+            if poke['timeleft'] <= 0:
+                del poke_data['pokemon'][pokehash]
+    finally:
+        poke_data_lock.release()
 
 
 def write_data_to_file():
-    prune()
+    poke_data_lock.acquire()
+    try:
+        # different file for bandwidth save
+        with open(PKMN_DATA_FILE, 'w') as f:
+            json.dump(poke_data['pokemon'], f, indent=2)
 
-    # different file for bandwidth save
-    with open(PKMN_DATA_FILE, 'w') as f:
-        json.dump(poke_data['pokemon'], f, indent=2)
+        with open(PKSTOP_DATA_FILE, 'w') as f:
+            json.dump(poke_data['pokestop'], f, indent=2)
 
-    with open(PKSTOP_DATA_FILE, 'w') as f:
-        json.dump(poke_data['pokestop'], f, indent=2)
-
-    with open(GYM_DATA_FILE, 'w') as f:
-        json.dump(poke_data['gym'], f, indent=2)
+        with open(GYM_DATA_FILE, 'w') as f:
+            json.dump(poke_data['gym'], f, indent=2)
+    finally:
+        poke_data_lock.release()
 
 
 def add_pokemon(poke_id, name, lat, lng, timestamp, timeleft):
-    pokehash = '%s:%s:%s' % (lat, lng, poke_id)
-    if pokehash in poke_data['pokemon']:
-        if abs(poke_data['pokemon'][pokehash]['timeleft'] - timeleft) < 2:
-            # Assume it's the same one and average the expiry time
-            poke_data['pokemon'][pokehash]['timeleft'] += timeleft
-            poke_data['pokemon'][pokehash]['timeleft'] /= 2
+    poke_data_lock.acquire()
+    try:
+        pokehash = '%s:%s:%s' % (lat, lng, poke_id)
+        if pokehash in poke_data['pokemon']:
+            if abs(poke_data['pokemon'][pokehash]['timeleft'] - timeleft) < 2:
+                # Assume it's the same one and average the expiry time
+                poke_data['pokemon'][pokehash]['timeleft'] += timeleft
+                poke_data['pokemon'][pokehash]['timeleft'] /= 2
+            else:
+                print('[-] Two %s at the same location (%s,%s)' % (name, lat, lng))
+                poke_data['pokemon'][pokehash]['timeleft'] = min(poke_data['pokemon'][pokehash]['timeleft'], timeleft)
         else:
-            print('[-] Two %s at the same location (%s,%s)' % (name, lat, lng))
-            poke_data['pokemon'][pokehash]['timeleft'] = min(poke_data['pokemon'][pokehash]['timeleft'], timeleft)
-    else:
-        poke_data['pokemon'][pokehash] = {
-            'id': poke_id,
-            'name': name,
-            LAT_KEY: lat,
-            LONG_KEY: lng,
-            'timestamp': timestamp,
-            'timeleft': timeleft
-        }
+            poke_data['pokemon'][pokehash] = {
+                'id': poke_id,
+                'name': name,
+                LAT_KEY: lat,
+                LONG_KEY: lng,
+                'timestamp': timestamp,
+                'timeleft': timeleft
+            }
+    finally:
+        poke_data_lock.release()
+
 
 
 def add_pokestop(pokestop_id, lat, lng, timeleft):
-    if pokestop_id in poke_data[('%s' % POKESTOP_KEY)]:
-        poke_data[POKESTOP_KEY][pokestop_id]['timeleft'] = timeleft
-    else:
-        poke_data[POKESTOP_KEY][pokestop_id] = {
-            'id': pokestop_id,
-            LAT_KEY: lat,
-            LONG_KEY: lng,
-            'timeleft': timeleft
-        }
+    poke_data_lock.acquire()
+    try:
+        if pokestop_id in poke_data[('%s' % POKESTOP_KEY)]:
+            poke_data[POKESTOP_KEY][pokestop_id]['timeleft'] = timeleft
+        else:
+            poke_data[POKESTOP_KEY][pokestop_id] = {
+                'id': pokestop_id,
+                LAT_KEY: lat,
+                LONG_KEY: lng,
+                'timeleft': timeleft
+            }
+    finally:
+        poke_data_lock.release()
 
 
 def add_gym(gym_id, team, lat, lng, points, pokemon_guard):
-    if gym_id in poke_data[GYM_KEY]:
-        poke_data[GYM_KEY][gym_id]['team'] = team
-        poke_data[GYM_KEY][gym_id]['points'] = points
-        poke_data[GYM_KEY][gym_id]['guard'] = pokemon_guard
-    else:
-        poke_data[GYM_KEY][gym_id] = {
-            'id': gym_id,
-            'team': team,
-            LAT_KEY: lat,
-            LONG_KEY: lng,
-            'points': points,
-            'guard': pokemon_guard
-        }
+    poke_data_lock.acquire()
+    try:
+        if gym_id in poke_data[GYM_KEY]:
+            poke_data[GYM_KEY][gym_id]['team'] = team
+            poke_data[GYM_KEY][gym_id]['points'] = points
+            poke_data[GYM_KEY][gym_id]['guard'] = pokemon_guard
+        else:
+            poke_data[GYM_KEY][gym_id] = {
+                'id': gym_id,
+                'team': team,
+                LAT_KEY: lat,
+                LONG_KEY: lng,
+                'points': points,
+                'guard': pokemon_guard
+            }
+    finally:
+        poke_data_lock.release()
 
 
 def api_req(api_endpoint, access_token, scan_location, *mehs, **kw):
@@ -400,7 +420,7 @@ def raw_heartbeat(api_endpoint, access_token, use_auth, scan_location):
     return h
 
 
-def heartbeat(api_endpoint, access_token, use_auth, scan_location):
+def heartbeat(api_endpoint, access_token, use_auth, scan_location, user_name):
     global is_valid
     while True:
         try:
@@ -410,10 +430,10 @@ def heartbeat(api_endpoint, access_token, use_auth, scan_location):
             if DEBUG:
                 print(e)
             print('[-] Heartbeat missed, retrying')
-            is_valid = False
+            is_valid[user_name] = False
 
 
-def scan(api_endpoint, access_token, use_auth, original_cell, pokemons, user_data, initial_user_scan_location, step_limit=NUM_STEPS):
+def scan(api_endpoint, access_token, use_auth, original_cell, user_data, initial_user_scan_location, step_limit=NUM_STEPS):
     steps = 0
     pos = 1
     x = 0
@@ -426,13 +446,13 @@ def scan(api_endpoint, access_token, use_auth, original_cell, pokemons, user_dat
         original_long = scanner_location[LONG_KEY]
         parent = CellId.from_lat_lng(LatLng.from_degrees(original_lat, original_long)).parent(15)
 
-        h = heartbeat(api_endpoint, access_token, use_auth, scanner_location)
+        h = heartbeat(api_endpoint, access_token, use_auth, scanner_location, user_data[USER_NAME_KEY])
         hs = [h]
         seen = set([])
         for child in parent.children():
             latlng = LatLng.from_point(Cell(child).get_center())
             child_scan_location = generate_scan_location(latlng.lat().degrees, latlng.lng().degrees, 0)
-            hs.append(heartbeat(api_endpoint, access_token, use_auth, child_scan_location))
+            hs.append(heartbeat(api_endpoint, access_token, use_auth, child_scan_location, user_data[USER_NAME_KEY]))
 
         visible = []
 
@@ -444,19 +464,19 @@ def scan(api_endpoint, access_token, use_auth, original_cell, pokemons, user_dat
                         if spawn_id_pokemon_id not in seen:
                             visible.append(wild)
                             seen.add(spawn_id_pokemon_id)
-                    if cell.Fort:
-                        for Fort in cell.Fort:
-                            if Fort.Enabled:
-                                if Fort.GymPoints:
-                                    add_gym(Fort.FortId, Fort.Team, Fort.Latitude, Fort.Longitude, Fort.GymPoints,
-                                            pokemons[Fort.GuardPokemonId - 1]['Name'])
-                                elif Fort.FortType:
-                                    expire_time = 0
-                                    if Fort.LureInfo.LureExpiresTimestampMs:
-                                        expire_time = datetime \
-                                            .fromtimestamp(Fort.LureInfo.LureExpiresTimestampMs / 1000.0) \
-                                            .strftime("%H:%M:%S")
-                                    add_pokestop(Fort.FortId, Fort.Latitude, Fort.Longitude, expire_time)
+                    # if cell.Fort:
+                    #     for Fort in cell.Fort:
+                    #         if Fort.Enabled:
+                    #             if Fort.GymPoints:
+                    #                 add_gym(Fort.FortId, Fort.Team, Fort.Latitude, Fort.Longitude, Fort.GymPoints,
+                    #                         pokemons[Fort.GuardPokemonId - 1]['Name'])
+                    #             elif Fort.FortType:
+                    #                 expire_time = 0
+                    #                 if Fort.LureInfo.LureExpiresTimestampMs:
+                    #                     expire_time = datetime \
+                    #                         .fromtimestamp(Fort.LureInfo.LureExpiresTimestampMs / 1000.0) \
+                    #                         .strftime("%H:%M:%S")
+                    #                 add_pokestop(Fort.FortId, Fort.Latitude, Fort.Longitude, expire_time)
 
             except AttributeError:
                 break
@@ -476,6 +496,7 @@ def scan(api_endpoint, access_token, use_auth, original_cell, pokemons, user_dat
             add_pokemon(poke.pokemon.PokemonId, pokemons[poke.pokemon.PokemonId - 1]['Name'], poke.Latitude,
                         poke.Longitude, timestamp, poke.TimeTillHiddenMs / 1000)
 
+        prune()
         write_data_to_file()
 
         if (-step_limit / 2 < x <= step_limit / 2) and (-step_limit / 2 < y <= step_limit / 2):
@@ -572,36 +593,40 @@ def generate_scan_location(lat, lng, alt):
     }
 
 
-def run_poke_data_collection(user_data, pokemons):
+def run_poke_data_collection(user_data):
     global is_valid
-    initial_scan_location = generate_scan_location(user_data[LOCATION_KEY][LAT_KEY],
-                                                   user_data[LOCATION_KEY][LONG_KEY],
-                                                   user_data[LOCATION_KEY][ALT_KEY])
+    user_name = user_data[USER_NAME_KEY]
 
-    access_token = login(user_data[USER_NAME_KEY], user_data[PASSWORD_KEY])
+    while True:
+        is_valid[user_name] = True
+        initial_scan_location = generate_scan_location(user_data[LOCATION_KEY][LAT_KEY],
+                                                       user_data[LOCATION_KEY][LONG_KEY],
+                                                       user_data[LOCATION_KEY][ALT_KEY])
 
-    if access_token is None:
-        print('[-] Error logging in: possible wrong username/password')
-        return
+        access_token = login(user_name, user_data[PASSWORD_KEY])
 
-    print('[+] RPC Session Token: {} ...'.format(access_token[:25]))
+        if access_token is None:
+            print('[-] Error logging in: possible wrong username/password')
+            return
 
-    api_endpoint = get_api_endpoint(access_token, initial_scan_location)
-    if api_endpoint is None:
-        print('[-] RPC server offline')
-        return
-    print('[+] Received API endpoint: {}'.format(api_endpoint))
+        print('[+] RPC Session Token: {} ...'.format(access_token[:25]))
 
-    response = get_profile(access_token, api_endpoint, None, initial_scan_location)
-    print_user_details(response)
+        api_endpoint = get_api_endpoint(access_token, initial_scan_location)
+        if api_endpoint is None:
+            print('[-] RPC server offline')
+            return
+        print('[+] Received API endpoint: {}'.format(api_endpoint))
 
-    origin_cell = LatLng.from_degrees(user_data[LOCATION_KEY][LAT_KEY], user_data[LOCATION_KEY][LAT_KEY])
+        response = get_profile(access_token, api_endpoint, None, initial_scan_location)
+        print_user_details(response)
 
-    start_time = time.time()
-    elapsed_time = time.time() - start_time
-    while is_valid and elapsed_time < REFRESH_TIME:
-        scan(api_endpoint, access_token, response.unknown7, origin_cell, pokemons, user_data, initial_scan_location)
-        elapsed_time = time.time()
+        origin_cell = LatLng.from_degrees(user_data[LOCATION_KEY][LAT_KEY], user_data[LOCATION_KEY][LAT_KEY])
+
+        start_time = time.time()
+        elapsed_time = time.time() - start_time
+        while is_valid[user_name] and elapsed_time < REFRESH_TIME:
+            scan(api_endpoint, access_token, response.unknown7, origin_cell, user_data, initial_scan_location)
+            elapsed_time = time.time()
 
 
 def generate_user_location(address):
@@ -679,12 +704,11 @@ def main():
     # set_location(args.location)
     set_gmaps_data(GMAPS_API_KEY, GMAP_DATA_FILE)
 
+    global pokemons
     pokemons = json.load(open(path + '/pokemon.json'))
 
-    while True:
-        for user_data in users_data:
-            run_poke_data_collection(user_data, pokemons)
-
+    pool = ThreadPool(len(users_data))
+    pool.map(run_poke_data_collection, users_data)
 
 if __name__ == '__main__':
     main()
